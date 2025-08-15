@@ -1,0 +1,29 @@
+parameters:
+    level: 5
+    paths:
+        - tainacan-document-checker.php
+        - includes/
+    excludePaths:
+        - vendor/
+        - tests/
+    bootstrapFiles:
+        - vendor/autoload.php
+    scanFiles:
+        - tainacan-document-checker.php
+    scanDirectories:
+        - vendor/wordpress/
+    treatPhpDocTypesAsCertain: false
+    reportUnmatchedIgnoredErrors: false
+    ignoreErrors:
+        # Ignore WordPress global functions
+        - '#Function (add_action|add_filter|add_shortcode|get_option|wp_.*) not found#'
+        - '#Constant (ABSPATH|WP_.*) not found#'
+        - '#Class WP_Error not found#'
+        - '#\$wpdb#'
+        # Ignore WordPress-specific patterns
+        - '#Access to an undefined property WP_.*#'
+        - '#Call to an undefined method WP_.*#'
+    parallel:
+        processTimeout: 300.0
+    wordpress:
+        enabled: true

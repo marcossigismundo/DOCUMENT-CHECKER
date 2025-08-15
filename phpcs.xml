@@ -1,0 +1,75 @@
+<?xml version="1.0"?>
+<ruleset xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" name="Tainacan Document Checker" xsi:noNamespaceSchemaLocation="https://raw.githubusercontent.com/squizlabs/PHP_CodeSniffer/master/phpcs.xsd">
+	<description>WordPress Coding Standards for Tainacan Document Checker</description>
+
+	<!-- What to scan -->
+	<file>.</file>
+	
+	<!-- Exclude paths -->
+	<exclude-pattern>/vendor/*</exclude-pattern>
+	<exclude-pattern>/node_modules/*</exclude-pattern>
+	<exclude-pattern>/tests/*</exclude-pattern>
+	<exclude-pattern>*.min.js</exclude-pattern>
+	<exclude-pattern>*.min.css</exclude-pattern>
+
+	<!-- How to scan -->
+	<arg value="sp"/> <!-- Show sniff and progress -->
+	<arg name="basepath" value="./"/>
+	<arg name="colors"/>
+	<arg name="extensions" value="php"/>
+	<arg name="parallel" value="8"/>
+
+	<!-- Rules: Check PHP version compatibility -->
+	<config name="testVersion" value="7.4-"/>
+	<rule ref="PHPCompatibilityWP"/>
+
+	<!-- Rules: WordPress Coding Standards -->
+	<rule ref="WordPress">
+		<!-- Allow short array syntax -->
+		<exclude name="Generic.Arrays.DisallowShortArraySyntax.Found"/>
+		
+		<!-- Allow :: in hook names -->
+		<exclude name="WordPress.NamingConventions.ValidHookName.UseUnderscores"/>
+	</rule>
+
+	<!-- Rules: WordPress Core -->
+	<rule ref="WordPress-Core"/>
+
+	<!-- Rules: WordPress Docs -->
+	<rule ref="WordPress-Docs"/>
+
+	<!-- Rules: WordPress Extra -->
+	<rule ref="WordPress-Extra">
+		<!-- We want to allow // translators: style comments -->
+		<exclude name="Squiz.Commenting.InlineComment.InvalidEndChar"/>
+	</rule>
+
+	<!-- Verify that the text_domain is set to the desired text-domain -->
+	<rule ref="WordPress.WP.I18n">
+		<properties>
+			<property name="text_domain" type="array">
+				<element value="tainacan-document-checker"/>
+			</property>
+		</properties>
+	</rule>
+
+	<!-- Allow for theme specific exceptions to the file name rules based on the theme hierarchy -->
+	<rule ref="WordPress.Files.FileName">
+		<properties>
+			<property name="is_plugin" value="true"/>
+		</properties>
+	</rule>
+
+	<!-- Set the minimum supported WP version -->
+	<config name="minimum_supported_wp_version" value="5.8"/>
+
+	<!-- Prefix all globals -->
+	<rule ref="WordPress.NamingConventions.PrefixAllGlobals">
+		<properties>
+			<property name="prefixes" type="array">
+				<element value="tcd_"/>
+				<element value="TainacanDocumentChecker"/>
+			</property>
+		</properties>
+	</rule>
+</ruleset>
