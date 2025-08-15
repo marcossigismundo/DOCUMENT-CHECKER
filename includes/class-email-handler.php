@@ -436,7 +436,12 @@ class TCD_Email_Handler {
 		if ( get_option( 'tcd_smtp_auth', true ) ) {
 			$phpmailer->SMTPAuth = true;
 			$phpmailer->Username = get_option( 'tcd_smtp_username', '' );
-			$phpmailer->Password = get_option( 'tcd_smtp_password', '' );
+			// Decode password if it's base64 encoded
+			$password = get_option( 'tcd_smtp_password', '' );
+			if ( ! empty( $password ) && base64_encode( base64_decode( $password ) ) === $password ) {
+				$password = base64_decode( $password );
+			}
+			$phpmailer->Password = $password;
 		}
 		
 		// Debug mode
