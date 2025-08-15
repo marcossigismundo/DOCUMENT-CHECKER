@@ -421,151 +421,128 @@ class TCD_Email_Handler {
 		return $headers;
 	}
 
-	/**
-	 * Configure PHPMailer for SMTP.
-	 *
-	 * @param PHPMailer $phpmailer PHPMailer instance.
-	 * @return void
-	 */
-	public function configure_smtp( $phpmailer ): void {
-		$phpmailer->isSMTP();
-		$phpmailer->Host = get_option( 'tcd_smtp_host', '' );
-		$phpmailer->Port = (int) get_option( 'tcd_smtp_port', 587 );
-		$phpmailer->SMTPSecure = get_option( 'tcd_smtp_encryption', 'tls' );
-		
-		if ( get_option( 'tcd_smtp_auth', true ) ) {
-			$phpmailer->SMTPAuth = true;
-			$phpmailer->Username = get_option( 'tcd_smtp_username', '' );
-			// Decode password if it's base64 encoded
-			$password = get_option( 'tcd_smtp_password', '' );
-			if ( ! empty( $password ) && base64_encode( base64_decode( $password ) ) === $password ) {
-				$password = base64_decode( $password );
-			}
-			$phpmailer->Password = $password;
-		}
-		
-		// Debug mode
-		if ( get_option( 'tcd_debug_mode', false ) ) {
-			$phpmailer->SMTPDebug = 2;
-			$phpmailer->Debugoutput = function( $str, $level ) {
-				error_log( 'TCD SMTP Debug [' . $level . ']: ' . $str );
-			};
-		}
-	}
+	<?php
+/**
+ * Enhanced test email with detailed debugging
+ * Replace the send_test_email method in class-email-handler.php with this version
+ */
 
-	/**
-	 * Log email sending attempt.
-	 *
-	 * @param int    $user_id User ID.
-	 * @param int    $item_id Item ID (0 for batch).
-	 * @param string $type Email type.
-	 * @param string $subject Email subject.
-	 * @param string $status Status (sent/failed).
-	 * @return void
-	 */
-	private function log_email( int $user_id, int $item_id, string $type, string $subject, string $status ): void {
-		global $wpdb;
-		
-		$table_name = $wpdb->prefix . 'tainacan_document_emails';
-		
-		$wpdb->insert(
-			$table_name,
-			array(
-				'user_id'    => $user_id,
-				'item_id'    => $item_id,
-				'email_type' => $type,
-				'subject'    => $subject,
-				'status'     => $status,
-				'sent_date'  => current_time( 'mysql' ),
-			),
-			array( '%d', '%d', '%s', '%s', '%s', '%s' )
-		);
-		
-		if ( get_option( 'tcd_debug_mode', false ) ) {
-			error_log( sprintf( 
-				'TCD Email Log: %s email to user %d for item %d - Status: %s', 
-				$type, 
-				$user_id, 
-				$item_id, 
-				$status 
-			) );
-		}
-	}
+public function send_test_email( string $test_email ): bool {
+    if ( ! is_email( $test_email ) ) {
+        if ( get_option( 'tcd_debug_mode', false ) ) {
+            error_log( 'TCD Test Email: Invalid email address - ' . $test_email );
+        }
+        return false;
+    }
+    
+    // Log configuration for debugging
+    if ( get_option( 'tcd_debug_mode', false ) ) {
+        error_log( 'TCD Test Email: Starting test to ' . $test_email );
+        error_log( 'TCD Test Email: SMTP Enabled = ' . ( get_option( 'tcd_smtp_enabled', false ) ? 'Yes' : 'No' ) );
+        if ( get_option( 'tcd_smtp_enabled', false ) ) {
+            error_log( 'TCD Test Email: SMTP Host = ' . get_option( 'tcd_smtp_host', '' ) );
+            error_log( 'TCD Test Email: SMTP Port = ' . get_option( 'tcd_smtp_port', 587 ) );
+            error_log( 'TCD Test Email: SMTP User = ' . get_option( 'tcd_smtp_username', '' ) );
+            error_log( 'TCD Test Email: From Email = ' . get_option( 'tcd_smtp_from_email', get_option( 'admin_email' ) ) );
+        }
+    }
+    
+    $subject = __( 'Test Email - Tainacan Document Checker', 'tainacan-document-checker' );
+    $message = __( 'This is a test email from Tainacan Document Checker plugin.', 'tainacan-document-checker' ) . "\n\n";
+    $message .= __( 'If you received this email, your email configuration is working correctly.', 'tainacan-document-checker' ) . "\n\n";
+    $message .= __( 'Configuration details:', 'tainacan-document-checker' ) . "\n";
+    $message .= '- ' . __( 'SMTP Enabled:', 'tainacan-document-checker' ) . ' ' . ( get_option( 'tcd_smtp_enabled', false ) ? 'Yes' : 'No' ) . "\n";
+    $message .= '- ' . __( 'HTML Emails:', 'tainacan-document-checker' ) . ' ' . ( get_option( 'tcd_email_html', false ) ? 'Yes' : 'No' ) . "\n";
+    $message .= '- ' . __( 'From Email:', 'tainacan-document-checker' ) . ' ' . get_option( 'tcd_smtp_from_email', get_option( 'admin_email' ) ) . "\n";
+    $message .= '- ' . __( 'Send Time:', 'tainacan-document-checker' ) . ' ' . current_time( 'mysql' ) . "\n";
+    
+    $headers = $this->prepare_headers();
+    
+    // Configure SMTP if enabled
+    if ( get_option( 'tcd_smtp_enabled', false ) ) {
+        add_action( 'phpmailer_init', array( $this, 'configure_smtp' ), 10, 1 );
+    }
+    
+    // Add debug action for mail failures
+    add_action( 'wp_mail_failed', function( $error ) {
+        if ( get_option( 'tcd_debug_mode', false ) ) {
+            error_log( 'TCD Test Email Failed: ' . print_r( $error, true ) );
+        }
+    });
+    
+    // Try to send
+    $sent = wp_mail( $test_email, $subject, $message, $headers );
+    
+    // Log result
+    if ( get_option( 'tcd_debug_mode', false ) ) {
+        error_log( 'TCD Test Email: Send result = ' . ( $sent ? 'SUCCESS' : 'FAILED' ) );
+        if ( ! $sent ) {
+            global $phpmailer;
+            if ( isset( $phpmailer ) && ! empty( $phpmailer->ErrorInfo ) ) {
+                error_log( 'TCD Test Email: PHPMailer Error = ' . $phpmailer->ErrorInfo );
+            }
+        }
+    }
+    
+    // Remove SMTP configuration
+    if ( get_option( 'tcd_smtp_enabled', false ) ) {
+        remove_action( 'phpmailer_init', array( $this, 'configure_smtp' ), 10 );
+    }
+    
+    return $sent;
+}
 
-	/**
-	 * Get email logs.
-	 *
-	 * @param array $args Query arguments.
-	 * @return array Email logs.
-	 */
-	public function get_email_logs( array $args = array() ): array {
-		global $wpdb;
-		
-		$defaults = array(
-			'user_id' => 0,
-			'item_id' => 0,
-			'status'  => '',
-			'limit'   => 50,
-			'offset'  => 0,
-		);
-		
-		$args = wp_parse_args( $args, $defaults );
-		$table_name = $wpdb->prefix . 'tainacan_document_emails';
-		
-		$where = array( '1=1' );
-		
-		if ( $args['user_id'] ) {
-			$where[] = $wpdb->prepare( 'user_id = %d', $args['user_id'] );
-		}
-		
-		if ( $args['item_id'] ) {
-			$where[] = $wpdb->prepare( 'item_id = %d', $args['item_id'] );
-		}
-		
-		if ( $args['status'] ) {
-			$where[] = $wpdb->prepare( 'status = %s', $args['status'] );
-		}
-		
-		$sql = "SELECT * FROM $table_name WHERE " . implode( ' AND ', $where );
-		$sql .= " ORDER BY sent_date DESC";
-		$sql .= $wpdb->prepare( ' LIMIT %d OFFSET %d', $args['limit'], $args['offset'] );
-		
-		return $wpdb->get_results( $sql, ARRAY_A );
-	}
-
-	/**
-	 * Test email configuration.
-	 *
-	 * @param string $test_email Email address to send test to.
-	 * @return bool True if test email sent successfully.
-	 */
-	public function send_test_email( string $test_email ): bool {
-		if ( ! is_email( $test_email ) ) {
-			return false;
-		}
-		
-		$subject = __( 'Test Email - Tainacan Document Checker', 'tainacan-document-checker' );
-		$message = __( 'This is a test email from Tainacan Document Checker plugin.', 'tainacan-document-checker' ) . "\n\n";
-		$message .= __( 'If you received this email, your email configuration is working correctly.', 'tainacan-document-checker' ) . "\n\n";
-		$message .= __( 'Configuration details:', 'tainacan-document-checker' ) . "\n";
-		$message .= '- ' . __( 'SMTP Enabled:', 'tainacan-document-checker' ) . ' ' . ( get_option( 'tcd_smtp_enabled', false ) ? 'Yes' : 'No' ) . "\n";
-		$message .= '- ' . __( 'HTML Emails:', 'tainacan-document-checker' ) . ' ' . ( get_option( 'tcd_email_html', false ) ? 'Yes' : 'No' ) . "\n";
-		$message .= '- ' . __( 'From Email:', 'tainacan-document-checker' ) . ' ' . get_option( 'tcd_smtp_from_email', get_option( 'admin_email' ) ) . "\n";
-		
-		$headers = $this->prepare_headers();
-		
-		// Configure SMTP if enabled
-		if ( get_option( 'tcd_smtp_enabled', false ) ) {
-			add_action( 'phpmailer_init', array( $this, 'configure_smtp' ) );
-		}
-		
-		$sent = wp_mail( $test_email, $subject, $message, $headers );
-		
-		// Remove SMTP configuration
-		if ( get_option( 'tcd_smtp_enabled', false ) ) {
-			remove_action( 'phpmailer_init', array( $this, 'configure_smtp' ) );
-		}
-		
-		return $sent;
-	}
+/**
+ * Enhanced SMTP configuration with better error handling
+ * Replace the configure_smtp method with this version
+ */
+public function configure_smtp( $phpmailer ): void {
+    try {
+        $phpmailer->isSMTP();
+        $phpmailer->Host = get_option( 'tcd_smtp_host', '' );
+        $phpmailer->Port = (int) get_option( 'tcd_smtp_port', 587 );
+        
+        $encryption = get_option( 'tcd_smtp_encryption', 'tls' );
+        if ( ! empty( $encryption ) && $encryption !== 'none' ) {
+            $phpmailer->SMTPSecure = $encryption;
+        } else {
+            $phpmailer->SMTPSecure = '';
+            $phpmailer->SMTPAutoTLS = false;
+        }
+        
+        if ( get_option( 'tcd_smtp_auth', true ) ) {
+            $phpmailer->SMTPAuth = true;
+            $phpmailer->Username = get_option( 'tcd_smtp_username', '' );
+            
+            // Decode password if it's base64 encoded
+            $password = get_option( 'tcd_smtp_password', '' );
+            if ( ! empty( $password ) && base64_encode( base64_decode( $password ) ) === $password ) {
+                $password = base64_decode( $password );
+            }
+            $phpmailer->Password = $password;
+        } else {
+            $phpmailer->SMTPAuth = false;
+        }
+        
+        // Set From
+        $from_email = get_option( 'tcd_smtp_from_email', get_option( 'admin_email' ) );
+        $from_name = get_option( 'tcd_smtp_from_name', get_bloginfo( 'name' ) );
+        
+        if ( is_email( $from_email ) ) {
+            $phpmailer->From = $from_email;
+            $phpmailer->FromName = $from_name;
+        }
+        
+        // Debug mode
+        if ( get_option( 'tcd_debug_mode', false ) ) {
+            $phpmailer->SMTPDebug = 2;
+            $phpmailer->Debugoutput = function( $str, $level ) {
+                error_log( 'TCD SMTP Debug [' . $level . ']: ' . $str );
+            };
+        }
+    } catch ( Exception $e ) {
+        if ( get_option( 'tcd_debug_mode', false ) ) {
+            error_log( 'TCD SMTP Configuration Error: ' . $e->getMessage() );
+        }
+    }
 }
