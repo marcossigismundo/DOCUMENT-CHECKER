@@ -40,6 +40,13 @@ class TCD_Document_Checker {
 	private bool $debug_mode;
 
 	/**
+	 * SSL verification flag.
+	 *
+	 * @var bool
+	 */
+	private bool $ssl_verify;
+
+	/**
 	 * Constructor.
 	 */
 	public function __construct() {
@@ -50,11 +57,75 @@ class TCD_Document_Checker {
 			'documento_responsavel',
 		) );
 		$this->debug_mode         = (bool) get_option( 'tcd_debug_mode', false );
+		$this->ssl_verify         = (bool) get_option( 'tcd_ssl_verify', true );
+		
+		// Desabilitar SSL verify para localhost/desenvolvimento
+		if ( $this->is_localhost() ) {
+			$this->ssl_verify = false;
+		}
 		
 		// Log para debug
 		if ( $this->debug_mode ) {
 			error_log( 'TCD Debug - Required documents loaded: ' . print_r( $this->required_documents, true ) );
+			error_log( 'TCD Debug - SSL Verification: ' . ( $this->ssl_verify ? 'Enabled' : 'Disabled' ) );
 		}
+	}
+
+	/**
+	 * Check if running on localhost.
+	 *
+	 * @return bool
+	 */
+	private function is_localhost(): bool {
+		$whitelist = array( '127.0.0.1', '::1' );
+		
+		if ( isset( $_SERVER['SERVER_NAME'] ) ) {
+			if ( in_array( $_SERVER['SERVER_NAME'], array( 'localhost', '127.0.0.1' ), true ) ) {
+				return true;
+			}
+		}
+		
+		if ( isset( $_SERVER['REMOTE_ADDR'] ) && in_array( $_SERVER['REMOTE_ADDR'], $whitelist, true ) ) {
+			return true;
+		}
+		
+		// Check if URL contains localhost
+		if ( strpos( $this->api_url, 'localhost' ) !== false || 
+		     strpos( $this->api_url, '127.0.0.1' ) !== false ) {
+			return true;
+		}
+		
+		return false;
+	}
+
+	/**
+	 * Get HTTP request args with proper SSL configuration.
+	 *
+	 * @return array
+	 */
+	private function get_http_args(): array {
+		$args = array(
+			'timeout'     => 30,
+			'redirection' => 5,
+			'httpversion' => '1.1',
+			'headers'     => array(
+				'Accept' => 'application/json',
+				'Content-Type' => 'application/json',
+			),
+			'sslverify'   => $this->ssl_verify,
+		);
+
+		// Additional SSL configuration for development environments
+		if ( ! $this->ssl_verify ) {
+			$args['sslverify'] = false;
+			$args['ssl'] = false;
+			
+			// Add filter to bypass SSL for this request
+			add_filter( 'https_ssl_verify', '__return_false' );
+			add_filter( 'https_local_ssl_verify', '__return_false' );
+		}
+
+		return $args;
 	}
 
 	/**
@@ -211,6 +282,7 @@ class TCD_Document_Checker {
 				'required_documents' => $this->required_documents,
 				'attachment_details' => $attachment_details,
 				'raw_attachments'    => $attachments,
+				'ssl_verify'         => $this->ssl_verify,
 			);
 		}
 
@@ -280,6 +352,162 @@ class TCD_Document_Checker {
 		}
 		
 		return false;
+	}
+
+	/**
+	 * Fetch attachments for an item via Tainacan API.
+	 *
+	 * @param int $item_id Item ID.
+	 * @return array|WP_Error Array of attachments or error.
+	 */
+	private function fetch_item_attachments( int $item_id ) {
+		$url = $this->api_url . '/items/' . $item_id . '/attachments';
+
+		if ( $this->debug_mode ) {
+			error_log( 'TCD Debug - Fetching attachments from: ' . $url );
+		}
+
+		$args = $this->get_http_args();
+		$response = wp_remote_get( $url, $args );
+
+		// Remove filters if they were added
+		if ( ! $this->ssl_verify ) {
+			remove_filter( 'https_ssl_verify', '__return_false' );
+			remove_filter( 'https_local_ssl_verify', '__return_false' );
+		}
+
+		if ( is_wp_error( $response ) ) {
+			if ( $this->debug_mode ) {
+				error_log( 'TCD Debug - API Error: ' . $response->get_error_message() );
+				error_log( 'TCD Debug - Error Code: ' . $response->get_error_code() );
+			}
+			
+			// Handle specific SSL error
+			if ( strpos( $response->get_error_message(), 'SSL certificate problem' ) !== false ||
+			     strpos( $response->get_error_message(), 'cURL error 60' ) !== false ) {
+				return new WP_Error( 
+					'ssl_error', 
+					__( 'SSL Certificate verification failed. Please check SSL settings or contact administrator.', 'tainacan-document-checker' ) 
+				);
+			}
+			
+			return $response;
+		}
+
+		$body = wp_remote_retrieve_body( $response );
+		$data = json_decode( $body, true );
+
+		if ( null === $data ) {
+			return new WP_Error( 'json_decode_error', __( 'Failed to decode API response', 'tainacan-document-checker' ) );
+		}
+
+		// Handle API errors
+		if ( ! is_array( $data ) ) {
+			if ( is_string( $data ) && 'rest_forbidden' === $data ) {
+				return new WP_Error( 'rest_forbidden', __( 'Access forbidden. The attachments may be private or restricted.', 'tainacan-document-checker' ) );
+			}
+			return new WP_Error( 'invalid_response', __( 'Invalid API response format', 'tainacan-document-checker' ) );
+		}
+
+		// Handle error responses
+		if ( isset( $data['code'] ) && isset( $data['message'] ) ) {
+			return new WP_Error( $data['code'], $data['message'] );
+		}
+
+		if ( $this->debug_mode && ! empty( $data ) ) {
+			error_log( 'TCD Debug - Received ' . count( $data ) . ' attachments for item ' . $item_id );
+			if ( count( $data ) > 0 ) {
+				error_log( 'TCD Debug - First attachment structure: ' . print_r( $data[0], true ) );
+			}
+		}
+
+		return $data;
+	}
+
+	/**
+	 * Fetch items from a collection via Tainacan API.
+	 *
+	 * @param int $collection_id Collection ID.
+	 * @param int $page Page number.
+	 * @param int $per_page Items per page.
+	 * @return array|WP_Error Array with items and pagination data or error.
+	 */
+	private function fetch_collection_items( int $collection_id, int $page = 1, int $per_page = 20 ) {
+		$url = add_query_arg(
+			array(
+				'paged'      => $page,
+				'perpage'    => $per_page,
+				'fetch_only' => 'title,id',
+				'orderby'    => 'id',
+				'order'      => 'ASC',
+			),
+			$this->api_url . '/collection/' . $collection_id . '/items'
+		);
+
+		if ( $this->debug_mode ) {
+			error_log( 'TCD Debug - Fetching items from URL: ' . $url );
+		}
+
+		$args = $this->get_http_args();
+		$response = wp_remote_get( $url, $args );
+
+		// Remove filters if they were added
+		if ( ! $this->ssl_verify ) {
+			remove_filter( 'https_ssl_verify', '__return_false' );
+			remove_filter( 'https_local_ssl_verify', '__return_false' );
+		}
+
+		if ( is_wp_error( $response ) ) {
+			if ( $this->debug_mode ) {
+				error_log( 'TCD Debug - Collection API Error: ' . $response->get_error_message() );
+			}
+			return $response;
+		}
+
+		$headers = wp_remote_retrieve_headers( $response );
+		$body    = wp_remote_retrieve_body( $response );
+		$items   = json_decode( $body, true );
+
+		if ( null === $items ) {
+			return new WP_Error( 'json_decode_error', __( 'Failed to decode API response', 'tainacan-document-checker' ) );
+		}
+
+		// Debug API response structure
+		if ( $this->debug_mode ) {
+			error_log( 'TCD Debug - API Response structure: ' . print_r( array(
+				'type' => gettype( $items ),
+				'is_array' => is_array( $items ),
+				'count' => is_array( $items ) ? count( $items ) : 'not array',
+				'first_item' => is_array( $items ) && ! empty( $items ) ? array_slice( $items, 0, 1 ) : 'empty',
+				'headers' => array(
+					'X-WP-Total' => $headers['X-WP-Total'] ?? 'not found',
+					'X-WP-TotalPages' => $headers['X-WP-TotalPages'] ?? 'not found',
+				),
+			), true ) );
+		}
+
+		// Handle different response structures from Tainacan API
+		$total_items = 0;
+		$total_pages = 0;
+		$items_array = array();
+
+		// Check if response is wrapped
+		if ( is_array( $items ) && isset( $items['items'] ) ) {
+			$items_array = $items['items'];
+			$total_items = $items['total'] ?? count( $items_array );
+			$total_pages = $items['total_pages'] ?? ceil( $total_items / $per_page );
+		} elseif ( is_array( $items ) ) {
+			$items_array = $items;
+			// Try to get totals from headers
+			$total_items = isset( $headers['X-WP-Total'] ) ? (int) $headers['X-WP-Total'] : count( $items );
+			$total_pages = isset( $headers['X-WP-TotalPages'] ) ? (int) $headers['X-WP-TotalPages'] : ceil( $total_items / $per_page );
+		}
+
+		return array(
+			'items' => $items_array,
+			'total' => $total_items,
+			'total_pages' => $total_pages,
+		);
 	}
 
 	/**
@@ -408,309 +636,94 @@ class TCD_Document_Checker {
 	}
 
 	/**
-	 * Fetch attachments for an item via Tainacan API.
-	 *
-	 * @param int $item_id Item ID.
-	 * @return array|WP_Error Array of attachments or error.
-	 */
-	private function fetch_item_attachments( int $item_id ) {
-		$url = $this->api_url . '/items/' . $item_id . '/attachments';
-
-		if ( $this->debug_mode ) {
-			error_log( 'TCD Debug - Fetching attachments from: ' . $url );
-		}
-
-		$response = wp_remote_get(
-			$url,
-			array(
-				'timeout' => 30,
-				'headers' => array(
-					'Accept' => 'application/json',
-				),
-			)
-		);
-
-		if ( is_wp_error( $response ) ) {
-			return $response;
-		}
-
-		$body = wp_remote_retrieve_body( $response );
-		$data = json_decode( $body, true );
-
-		if ( null === $data ) {
-			return new WP_Error( 'json_decode_error', __( 'Failed to decode API response', 'tainacan-document-checker' ) );
-		}
-
-		// Handle API errors
-		if ( ! is_array( $data ) ) {
-			if ( is_string( $data ) && 'rest_forbidden' === $data ) {
-				return new WP_Error( 'rest_forbidden', __( 'Access forbidden. The attachments may be private or restricted.', 'tainacan-document-checker' ) );
-			}
-			return new WP_Error( 'invalid_response', __( 'Invalid API response format', 'tainacan-document-checker' ) );
-		}
-
-		// Handle error responses
-		if ( isset( $data['code'] ) && isset( $data['message'] ) ) {
-			return new WP_Error( $data['code'], $data['message'] );
-		}
-
-		if ( $this->debug_mode && ! empty( $data ) ) {
-			error_log( 'TCD Debug - Received ' . count( $data ) . ' attachments for item ' . $item_id );
-			if ( count( $data ) > 0 ) {
-				error_log( 'TCD Debug - First attachment structure: ' . print_r( $data[0], true ) );
-			}
-		}
-
-		return $data;
-	}
-
-	/**
-	 * Fetch items from a collection via Tainacan API.
-	 *
-	 * @param int $collection_id Collection ID.
-	 * @param int $page Page number.
-	 * @param int $per_page Items per page.
-	 * @return array|WP_Error Array with items and pagination data or error.
-	 */
-	private function fetch_collection_items( int $collection_id, int $page = 1, int $per_page = 20 ) {
-		$url = add_query_arg(
-			array(
-				'paged'      => $page,
-				'perpage'    => $per_page,
-				'fetch_only' => 'title,id',
-				'orderby'    => 'id',
-				'order'      => 'ASC',
-			),
-			$this->api_url . '/collection/' . $collection_id . '/items'
-		);
-
-		if ( $this->debug_mode ) {
-			error_log( 'TCD Debug - Fetching items from URL: ' . $url );
-		}
-
-		$response = wp_remote_get(
-			$url,
-			array(
-				'timeout' => 30,
-				'headers' => array(
-					'Accept' => 'application/json',
-				),
-			)
-		);
-
-		if ( is_wp_error( $response ) ) {
-			return $response;
-		}
-
-		$headers = wp_remote_retrieve_headers( $response );
-		$body    = wp_remote_retrieve_body( $response );
-		$items   = json_decode( $body, true );
-
-		if ( null === $items ) {
-			return new WP_Error( 'json_decode_error', __( 'Failed to decode API response', 'tainacan-document-checker' ) );
-		}
-
-		// Debug API response structure
-		if ( $this->debug_mode ) {
-			error_log( 'TCD Debug - API Response structure: ' . print_r( array(
-				'type' => gettype( $items ),
-				'is_array' => is_array( $items ),
-				'count' => is_array( $items ) ? count( $items ) : 'not array',
-				'first_item' => is_array( $items ) && ! empty( $items ) ? array_slice( $items, 0, 1 ) : 'empty',
-				'headers' => array(
-					'X-WP-Total' => $headers['X-WP-Total'] ?? 'not found',
-					'X-WP-TotalPages' => $headers['X-WP-TotalPages'] ?? 'not found',
-				),
-			), true ) );
-		}
-
-		// Handle different response structures from Tainacan API
-		$total_items = 0;
-		$total_pages = 0;
-		$items_array = array();
-
-		// Check if response is wrapped
-		if ( is_array( $items ) && isset( $items['items'] ) ) {
-			$items_array = $items['items'];
-			$total_items = $items['total'] ?? count( $items_array );
-			$total_pages = $items['total_pages'] ?? ceil( $total_items / $per_page );
-		} 
-		// Check if it's a direct array of items
-		elseif ( is_array( $items ) ) {
-			$items_array = $items;
-			// Try to get totals from headers first
-			$total_items = isset( $headers['X-WP-Total'] ) ? (int) $headers['X-WP-Total'] : count( $items );
-			$total_pages = isset( $headers['X-WP-TotalPages'] ) ? (int) $headers['X-WP-TotalPages'] : ceil( $total_items / $per_page );
-		}
-
-		return array(
-			'items'       => $items_array,
-			'total'       => $total_items,
-			'total_pages' => $total_pages,
-		);
-	}
-
-	/**
 	 * Save check result to database.
 	 *
-	 * @param array $result Check result data.
-	 * @return bool Success status.
+	 * @param array $result Check result.
+	 * @return void
 	 */
-	private function save_check_result( array $result ): bool {
+	private function save_check_result( array $result ): void {
 		global $wpdb;
 
 		$table_name = $wpdb->prefix . 'tainacan_document_checks';
 
-		// Extract collection ID from item if not provided
-		$collection_id = $result['collection_id'] ?? 0;
-		if ( ! $collection_id && isset( $result['item_id'] ) ) {
-			$post_type = get_post_type( $result['item_id'] );
-			if ( preg_match( '/tnc_col_(\d+)_item/', $post_type, $matches ) ) {
-				$collection_id = (int) $matches[1];
-			}
-		}
-
 		$data = array(
-			'item_id'          => $result['item_id'],
-			'collection_id'    => $collection_id,
-			'check_type'       => $result['check_type'] ?? 'individual',
-			'check_status'     => $result['status'],
-			'missing_documents' => maybe_serialize( $result['missing_documents'] ),
+			'item_id'           => $result['item_id'],
+			'status'            => $result['status'],
 			'found_documents'   => maybe_serialize( $result['found_documents'] ),
-			'check_date'       => $result['check_date'],
+			'missing_documents' => maybe_serialize( $result['missing_documents'] ),
+			'check_date'        => $result['check_date'],
 		);
 
-		$format = array( '%d', '%d', '%s', '%s', '%s', '%s', '%s' );
-
-		return false !== $wpdb->insert( $table_name, $data, $format );
+		$wpdb->replace( $table_name, $data );
 	}
 
 	/**
 	 * Get check history for an item.
 	 *
 	 * @param int $item_id Item ID.
-	 * @param int $limit Number of records to retrieve.
-	 * @return array Check history.
+	 * @return array|null History record or null.
 	 */
-	public function get_item_history( int $item_id, int $limit = 10 ): array {
+	public function get_item_history( int $item_id ) {
+		global $wpdb;
+
+		$table_name = $wpdb->prefix . 'tainacan_document_checks';
+
+		$result = $wpdb->get_row(
+			$wpdb->prepare(
+				"SELECT * FROM $table_name WHERE item_id = %d ORDER BY check_date DESC LIMIT 1",
+				$item_id
+			),
+			ARRAY_A
+		);
+
+		if ( $result ) {
+			$result['found_documents']   = maybe_unserialize( $result['found_documents'] );
+			$result['missing_documents'] = maybe_unserialize( $result['missing_documents'] );
+		}
+
+		return $result;
+	}
+
+	/**
+	 * Get all check history.
+	 *
+	 * @param int $limit Number of records to retrieve.
+	 * @return array Array of history records.
+	 */
+	public function get_all_history( int $limit = 50 ): array {
 		global $wpdb;
 
 		$table_name = $wpdb->prefix . 'tainacan_document_checks';
 
 		$results = $wpdb->get_results(
 			$wpdb->prepare(
-				"SELECT * FROM $table_name WHERE item_id = %d ORDER BY check_date DESC LIMIT %d",
-				$item_id,
+				"SELECT * FROM $table_name ORDER BY check_date DESC LIMIT %d",
 				$limit
 			),
 			ARRAY_A
 		);
 
-		if ( ! $results ) {
-			return array();
-		}
-
-		// Unserialize document arrays.
 		foreach ( $results as &$result ) {
-			$result['missing_documents'] = maybe_unserialize( $result['missing_documents'] );
 			$result['found_documents']   = maybe_unserialize( $result['found_documents'] );
+			$result['missing_documents'] = maybe_unserialize( $result['missing_documents'] );
 		}
 
 		return $results;
 	}
 
 	/**
-	 * Clear cache for a specific item.
+	 * Clear all cached results.
 	 *
-	 * @param int $item_id Item ID.
 	 * @return void
 	 */
-	public function clear_item_cache( int $item_id ): void {
-		// Clear single item cache
-		delete_transient( 'tcd_item_' . $item_id );
-		
-		// Clear batch caches that might contain this item
+	public function clear_cache(): void {
 		global $wpdb;
-		
-		// Get all batch cache transients
-		$transients = $wpdb->get_col(
-			"SELECT option_name FROM {$wpdb->options} 
-			WHERE option_name LIKE '_transient_tcd_batch_%'"
-		);
-		
-		foreach ( $transients as $transient ) {
-			// Extract collection ID from transient name
-			if ( preg_match( '/_transient_tcd_batch_(\d+)_/', $transient, $matches ) ) {
-				$collection_id = $matches[1];
-				
-				// Check if this item belongs to this collection
-				$post_type = get_post_type( $item_id );
-				if ( strpos( $post_type, 'tnc_col_' . $collection_id . '_item' ) !== false ) {
-					delete_option( $transient );
-					
-					// Also delete the timeout transient
-					$timeout_transient = str_replace( '_transient_', '_transient_timeout_', $transient );
-					delete_option( $timeout_transient );
-				}
-			}
-		}
-	}
 
-	/**
-	 * Clear all plugin caches.
-	 *
-	 * @return int Number of transients cleared.
-	 */
-	public function clear_all_caches(): int {
-		global $wpdb;
-		
-		// Get all plugin transients
-		$transients = $wpdb->get_col(
-			"SELECT option_name FROM {$wpdb->options} 
+		// Clear all transients that start with 'tcd_'
+		$wpdb->query(
+			"DELETE FROM {$wpdb->options} 
 			WHERE option_name LIKE '_transient_tcd_%' 
 			OR option_name LIKE '_transient_timeout_tcd_%'"
-		);
-		
-		$count = 0;
-		foreach ( $transients as $transient ) {
-			if ( delete_option( $transient ) ) {
-				$count++;
-			}
-		}
-		
-		return $count;
-	}
-
-	/**
-	 * Get cache statistics.
-	 *
-	 * @return array Cache statistics.
-	 */
-	public function get_cache_stats(): array {
-		global $wpdb;
-		
-		// Count cached items
-		$item_caches = $wpdb->get_var(
-			"SELECT COUNT(*) FROM {$wpdb->options} 
-			WHERE option_name LIKE '_transient_tcd_item_%'"
-		);
-		
-		$batch_caches = $wpdb->get_var(
-			"SELECT COUNT(*) FROM {$wpdb->options} 
-			WHERE option_name LIKE '_transient_tcd_batch_%'"
-		);
-		
-		// Calculate total cache size
-		$cache_size = $wpdb->get_var(
-			"SELECT SUM(LENGTH(option_value)) FROM {$wpdb->options} 
-			WHERE option_name LIKE '_transient_tcd_%'"
-		);
-		
-		return array(
-			'item_caches'  => (int) $item_caches,
-			'batch_caches' => (int) $batch_caches,
-			'total_caches' => (int) $item_caches + (int) $batch_caches,
-			'cache_size'   => $cache_size ? size_format( $cache_size ) : '0 B',
 		);
 	}
 }
