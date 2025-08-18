@@ -1,0 +1,275 @@
+/**
+ * Tainacan Document Checker Admin Styles
+ *
+ * @package TainacanDocumentChecker
+ * @since 1.0.0
+ */
+
+/* General Styles */
+.tcd-admin-content {
+    background: #fff;
+    padding: 20px;
+    margin-top: 20px;
+    border: 1px solid #ccd0d4;
+    box-shadow: 0 1px 1px rgba(0, 0, 0, 0.04);
+}
+
+.tcd-form {
+    max-width: 800px;
+}
+
+.tcd-form .form-table th {
+    width: 200px;
+}
+
+/* Tab Content */
+.tcd-tab-content {
+    animation: fadeIn 0.3s ease-in;
+}
+
+@keyframes fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+
+/* Result Container */
+.tcd-result-container {
+    margin-top: 30px;
+    padding: 20px;
+    background: #f8f9fa;
+    border: 1px solid #e2e4e7;
+    border-radius: 4px;
+}
+
+.tcd-result {
+    background: #fff;
+    padding: 20px;
+    border-radius: 4px;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+/* Status Styles */
+.tcd-status-complete {
+    color: #46b450;
+}
+
+.tcd-status-incomplete {
+    color: #d63638;
+}
+
+.tcd-status-badge {
+    display: inline-block;
+    padding: 3px 8px;
+    border-radius: 3px;
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: uppercase;
+}
+
+.tcd-status-badge.tcd-status-complete {
+    background: #ecf7ed;
+    color: #46b450;
+}
+
+.tcd-status-badge.tcd-status-incomplete {
+    background: #fcf0f1;
+    color: #d63638;
+}
+
+.tcd-status-badge.tcd-status-error {
+    background: #fcf0f1;
+    color: #d63638;
+}
+
+/* Document Lists */
+.tcd-found-documents,
+.tcd-missing-documents {
+    margin-top: 20px;
+}
+
+.tcd-found-documents h4,
+.tcd-missing-documents h4 {
+    margin-bottom: 10px;
+    font-size: 14px;
+    font-weight: 600;
+}
+
+.tcd-found-documents ul,
+.tcd-missing-documents ul {
+    margin: 0;
+    padding-left: 0;
+    list-style: none;
+}
+
+.tcd-found-documents li,
+.tcd-missing-documents li {
+    padding: 5px 0;
+    padding-left: 25px;
+    position: relative;
+}
+
+.tcd-found-documents li:before,
+.tcd-missing-documents li:before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 8px;
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+}
+
+.tcd-doc-found:before {
+    background: #46b450;
+    content: '✓';
+    color: #fff;
+    text-align: center;
+    line-height: 16px;
+    font-size: 12px;
+}
+
+.tcd-doc-missing:before {
+    background: #d63638;
+    content: '×';
+    color: #fff;
+    text-align: center;
+    line-height: 14px;
+    font-size: 16px;
+}
+
+/* Progress Bar */
+.tcd-progress {
+    margin-top: 20px;
+}
+
+.tcd-progress-bar {
+    width: 100%;
+    height: 20px;
+    background: #f0f0f1;
+    border-radius: 10px;
+    overflow: hidden;
+    margin-bottom: 10px;
+}
+
+.tcd-progress-fill {
+    height: 100%;
+    background: #2271b1;
+    transition: width 0.3s ease;
+    width: 0;
+}
+
+.tcd-progress-text {
+    text-align: center;
+    color: #50575e;
+    font-size: 14px;
+}
+
+/* Batch Results */
+.tcd-batch-summary {
+    margin-bottom: 20px;
+    padding: 15px;
+    background: #f6f7f7;
+    border-radius: 4px;
+}
+
+.tcd-summary-stats {
+    display: flex;
+    gap: 20px;
+    margin-top: 10px;
+}
+
+.tcd-stat {
+    font-weight: 600;
+    font-size: 14px;
+}
+
+.tcd-stat-complete {
+    color: #46b450;
+}
+
+.tcd-stat-incomplete {
+    color: #d63638;
+}
+
+.tcd-stat-error {
+    color: #d63638;
+}
+
+/* Document Manager */
+#tcd-documents-container {
+    max-width: 600px;
+    margin: 20px 0;
+}
+
+.tcd-document-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 10px;
+    padding: 10px;
+    background: #f6f7f7;
+    border-radius: 4px;
+}
+
+.tcd-document-row input {
+    flex: 1;
+}
+
+.tcd-remove-document {
+    flex-shrink: 0;
+}
+
+/* Debug Information */
+.tcd-debug {
+    margin-top: 30px;
+    padding: 20px;
+    background: #f0f0f1;
+    border-radius: 4px;
+}
+
+.tcd-debug h4 {
+    margin-top: 0;
+    margin-bottom: 10px;
+}
+
+.tcd-debug pre {
+    background: #fff;
+    padding: 15px;
+    border: 1px solid #dcdcde;
+    border-radius: 4px;
+    overflow-x: auto;
+    font-size: 12px;
+    line-height: 1.5;
+}
+
+/* Table Styles */
+.tcd-history table,
+.tcd-batch-result table {
+    margin-top: 20px;
+}
+
+.tcd-history table th,
+.tcd-batch-result table th {
+    font-weight: 600;
+}
+
+/* Responsive */
+@media screen and (max-width: 782px) {
+    .tcd-admin-content {
+        padding: 10px;
+    }
+    
+    .tcd-document-row {
+        flex-direction: column;
+        align-items: stretch;
+    }
+    
+    .tcd-summary-stats {
+        flex-direction: column;
+        gap: 10px;
+    }
+    
+    .form-table th {
+        padding-bottom: 0;
+    }
+}

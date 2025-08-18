@@ -1,0 +1,229 @@
+/**
+ * Tainacan Document Checker Frontend Styles
+ *
+ * @package TainacanDocumentChecker
+ * @since 1.0.0
+ */
+
+/* Document Status Container */
+.tcd-doc-status {
+    background: #f8f9fa;
+    border: 1px solid #e2e4e7;
+    border-radius: 8px;
+    padding: 25px;
+    margin: 20px 0;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+}
+
+.tcd-doc-status.tcd-status-complete {
+    border-left: 4px solid #46b450;
+}
+
+.tcd-doc-status.tcd-status-incomplete {
+    border-left: 4px solid #d63638;
+}
+
+/* Title */
+.tcd-doc-status-title {
+    margin: 0 0 20px 0;
+    font-size: 20px;
+    font-weight: 600;
+    color: #1e1e1e;
+}
+
+/* Status Summary */
+.tcd-status-summary {
+    margin-bottom: 20px;
+}
+
+.tcd-status-indicator {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 16px;
+    font-weight: 500;
+}
+
+.tcd-status-indicator .dashicons {
+    font-size: 24px;
+    width: 24px;
+    height: 24px;
+}
+
+.tcd-status-complete .tcd-status-indicator {
+    color: #46b450;
+}
+
+.tcd-status-incomplete .tcd-status-indicator {
+    color: #d63638;
+}
+
+/* Document Details */
+.tcd-doc-details {
+    margin-top: 25px;
+}
+
+.tcd-doc-section {
+    margin-bottom: 20px;
+}
+
+.tcd-doc-section h4 {
+    margin: 0 0 15px 0;
+    font-size: 16px;
+    font-weight: 600;
+    color: #50575e;
+}
+
+/* Document List */
+.tcd-doc-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: grid;
+    gap: 10px;
+}
+
+.tcd-doc-list li {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 15px;
+    background: #fff;
+    border-radius: 4px;
+    border: 1px solid #e2e4e7;
+    font-size: 14px;
+}
+
+.tcd-doc-list .dashicons {
+    font-size: 18px;
+    width: 18px;
+    height: 18px;
+    flex-shrink: 0;
+}
+
+.tcd-doc-present {
+    border-color: #c6e9c9;
+    background: #f4fbf4;
+}
+
+.tcd-doc-present .dashicons {
+    color: #46b450;
+}
+
+.tcd-doc-missing {
+    border-color: #f8c9cb;
+    background: #fef7f7;
+}
+
+.tcd-doc-missing .dashicons {
+    color: #d63638;
+}
+
+/* Missing Notice */
+.tcd-missing-notice {
+    background: #fcf0f1;
+    border: 1px solid #f8c9cb;
+    border-radius: 4px;
+    padding: 15px;
+    margin-top: 20px;
+}
+
+.tcd-missing-notice p {
+    margin: 0;
+    color: #50575e;
+    font-size: 14px;
+}
+
+.tcd-missing-notice strong {
+    color: #d63638;
+}
+
+/* Footer */
+.tcd-doc-footer {
+    margin-top: 25px;
+    padding-top: 20px;
+    border-top: 1px solid #e2e4e7;
+}
+
+.tcd-last-check {
+    margin: 0;
+    font-size: 13px;
+    color: #787c82;
+    font-style: italic;
+}
+
+/* Error Message */
+.tcd-error-message {
+    background: #fcf0f1;
+    border: 1px solid #f8c9cb;
+    color: #d63638;
+    padding: 15px;
+    border-radius: 4px;
+    margin: 0;
+}
+
+/* Responsive Design */
+@media screen and (max-width: 600px) {
+    .tcd-doc-status {
+        padding: 20px 15px;
+    }
+    
+    .tcd-doc-status-title {
+        font-size: 18px;
+    }
+    
+    .tcd-status-indicator {
+        font-size: 14px;
+    }
+    
+    .tcd-doc-list li {
+        font-size: 13px;
+        padding: 8px 12px;
+    }
+}
+
+/* Dark Mode Support (if theme supports it) */
+@media (prefers-color-scheme: dark) {
+    body.theme-dark .tcd-doc-status {
+        background: #1e1e1e;
+        border-color: #3c434a;
+        color: #f0f0f1;
+    }
+    
+    body.theme-dark .tcd-doc-status-title {
+        color: #f0f0f1;
+    }
+    
+    body.theme-dark .tcd-doc-section h4 {
+        color: #c3c4c7;
+    }
+    
+    body.theme-dark .tcd-doc-list li {
+        background: #2c3338;
+        border-color: #3c434a;
+        color: #f0f0f1;
+    }
+    
+    body.theme-dark .tcd-doc-present {
+        background: #1d3118;
+        border-color: #2a4422;
+    }
+    
+    body.theme-dark .tcd-doc-missing {
+        background: #3a1515;
+        border-color: #4a2222;
+    }
+    
+    body.theme-dark .tcd-missing-notice {
+        background: #3a1515;
+        border-color: #4a2222;
+    }
+    
+    body.theme-dark .tcd-doc-footer {
+        border-top-color: #3c434a;
+    }
+    
+    body.theme-dark .tcd-last-check {
+        color: #a7aaad;
+    }
+}
