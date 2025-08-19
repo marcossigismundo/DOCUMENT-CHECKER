@@ -1,6 +1,6 @@
 <?php
 /**
- * Ajax Handler Class (Corrigido para JSON)
+ * Ajax Handler Class (Corrigido para JSON e Email)
  *
  * @package TainacanDocumentChecker
  * @since 1.0.0
@@ -206,7 +206,8 @@ class TCD_Ajax_Handler {
 		$collection_id = isset( $_POST['collection_id'] ) ? absint( $_POST['collection_id'] ) : 0;
 		$page          = isset( $_POST['page'] ) ? absint( $_POST['page'] ) : 1;
 		$per_page      = isset( $_POST['per_page'] ) ? absint( $_POST['per_page'] ) : 20;
-		$send_emails   = isset( $_POST['send_emails'] ) && $_POST['send_emails'] === '1';
+		// CORREÇÃO: Usar o mesmo nome de campo que está sendo enviado pelo frontend
+		$send_email    = isset( $_POST['send_email'] ) && $_POST['send_email'] === '1';
 		
 		if ( ! $collection_id ) {
 			wp_send_json_error( __( 'Invalid collection ID.', 'tainacan-document-checker' ) );
@@ -214,6 +215,11 @@ class TCD_Ajax_Handler {
 
 		// Ensure reasonable limits.
 		$per_page = min( max( $per_page, 1 ), 100 );
+
+		// Debug log
+		if ( get_option( 'tcd_debug_mode', false ) ) {
+			error_log( 'TCD Debug - Batch check: Collection ' . $collection_id . ', Page ' . $page . ', Send email: ' . ( $send_email ? 'Yes' : 'No' ) );
+		}
 
 		try {
 			// Perform batch check.
@@ -225,20 +231,62 @@ class TCD_Ajax_Handler {
 			}
 
 			$response_data = $this->format_batch_result( $result );
+			
+			// Inicializar contador de emails
+			$emails_sent_count = 0;
+			$emails_failed_count = 0;
 
-			// Send batch email notifications if requested and on the last page
-			if ( $send_emails && get_option( 'tcd_email_enabled', false ) && $result['page'] >= $result['total_pages'] ) {
-				$email_stats = $this->email_handler->send_batch_notifications( $result );
-				$response_data['email_stats'] = $email_stats;
-				$response_data['email_message'] = sprintf(
-					/* translators: 1: emails sent, 2: emails failed */
-					__( 'Email notifications: %1$d sent, %2$d failed.', 'tainacan-document-checker' ),
-					$email_stats['emails_sent'],
-					$email_stats['emails_failed']
-				);
-			} elseif ( $send_emails && ! get_option( 'tcd_email_enabled', false ) ) {
-				$response_data['email_message'] = __( 'Email notifications are not enabled.', 'tainacan-document-checker' );
+			// CORREÇÃO: Enviar emails durante o processamento, não apenas no final
+			if ( $send_email && get_option( 'tcd_email_enabled', false ) ) {
+				if ( ! empty( $result['items_checked'] ) ) {
+					foreach ( $result['items_checked'] as $item ) {
+						// Enviar email apenas para itens incompletos
+						if ( 'incomplete' === $item['status'] ) {
+							$user_id = get_post_field( 'post_author', $item['id'] );
+							
+							if ( $user_id ) {
+								// Preparar resultado individual para o email
+								$item_result = array(
+									'status' => $item['status'],
+									'item_id' => $item['id'],
+									'missing_documents' => $item['missing_documents'] ?? array(),
+									'invalid_documents' => $item['invalid_documents'] ?? array(),
+									'found_documents' => $item['found_documents'] ?? array(),
+								);
+								
+								$email_sent = $this->email_handler->send_document_notification( $item_result, (int) $user_id );
+								
+								if ( $email_sent ) {
+									$emails_sent_count++;
+								} else {
+									$emails_failed_count++;
+								}
+								
+								if ( get_option( 'tcd_debug_mode', false ) ) {
+									error_log( 'TCD Debug - Email for item ' . $item['id'] . ' to user ' . $user_id . ': ' . ( $email_sent ? 'Sent' : 'Failed' ) );
+								}
+							}
+						}
+					}
+					
+					// Adicionar estatísticas de email à resposta
+					if ( $emails_sent_count > 0 || $emails_failed_count > 0 ) {
+						$response_data['emails_sent'] = $emails_sent_count;
+						$response_data['emails_failed'] = $emails_failed_count;
+						$response_data['email_message'] = sprintf(
+							/* translators: 1: emails sent, 2: emails failed */
+							__( 'Email notifications: %1$d sent, %2$d failed.', 'tainacan-document-checker' ),
+							$emails_sent_count,
+							$emails_failed_count
+						);
+					}
+				}
+			} elseif ( $send_email && ! get_option( 'tcd_email_enabled', false ) ) {
+				$response_data['email_message'] = __( 'Email notifications are not enabled. Please enable them in the Email Configuration tab.', 'tainacan-document-checker' );
 			}
+
+			// Adicionar indicador de mais páginas
+			$response_data['has_more'] = ( $result['page'] ?? 1 ) < ( $result['total_pages'] ?? 1 );
 
 			wp_send_json_success( $response_data );
 			
@@ -309,7 +357,12 @@ class TCD_Ajax_Handler {
 
 		try {
 			// Clear all plugin transients.
-			$cleared_count = $this->document_checker->clear_all_caches();
+			global $wpdb;
+			$cleared_count = $wpdb->query(
+				"DELETE FROM {$wpdb->options} 
+				WHERE option_name LIKE '_transient_tcd_%' 
+				OR option_name LIKE '_transient_timeout_tcd_%'"
+			);
 
 			wp_send_json_success( 
 				sprintf(
@@ -461,6 +514,7 @@ class TCD_Ajax_Handler {
 			'summary'      => $result['summary'] ?? array( 'complete' => 0, 'incomplete' => 0, 'error' => 0 ),
 			'html'         => $this->render_batch_result_html( $result ),
 			'progress'     => $progress,
+			'items_checked' => $result['items_checked'] ?? array(), // Incluir itens verificados
 		);
 	}
 
@@ -629,6 +683,9 @@ class TCD_Ajax_Handler {
 								<th><?php esc_html_e( 'Title', 'tainacan-document-checker' ); ?></th>
 								<th><?php esc_html_e( 'Status', 'tainacan-document-checker' ); ?></th>
 								<th><?php esc_html_e( 'Issues', 'tainacan-document-checker' ); ?></th>
+								<?php if ( get_option( 'tcd_email_enabled', false ) ) : ?>
+								<th><?php esc_html_e( 'Actions', 'tainacan-document-checker' ); ?></th>
+								<?php endif; ?>
 							</tr>
 						</thead>
 						<tbody>
@@ -659,16 +716,83 @@ class TCD_Ajax_Handler {
 										<?php endif; ?>
 										
 										<?php if ( ! $has_issues ) : ?>
-											<span style="color: #46b450;">✓ <?php esc_html_e( 'All documents valid', 'tainacan-document-checker' ); ?></span>
+											<span style="color: #46b450;">✔ <?php esc_html_e( 'All documents valid', 'tainacan-document-checker' ); ?></span>
 										<?php endif; ?>
 									</td>
+									<?php if ( get_option( 'tcd_email_enabled', false ) ) : ?>
+									<td>
+										<?php if ( 'incomplete' === $item['status'] ) : ?>
+											<button type="button" class="button button-small" onclick="window.TCD.sendSingleNotification(<?php echo esc_js( $item['id'] ); ?>)">
+												<?php esc_html_e( 'Send Email', 'tainacan-document-checker' ); ?>
+											</button>
+											<div id="tcd-email-result-<?php echo esc_attr( $item['id'] ); ?>" style="margin-top: 5px; font-size: 12px;"></div>
+										<?php else : ?>
+											-
+										<?php endif; ?>
+									</td>
+									<?php endif; ?>
 								</tr>
 							<?php endforeach; ?>
 						</tbody>
 					</table>
+					
+
+					
 				<?php else : ?>
 					<div class="notice notice-warning">
 						<p><?php esc_html_e( 'No items were processed in this batch.', 'tainacan-document-checker' ); ?></p>
+					</div>
+				<?php endif; ?>
+				
+				<?php
+				// SEMPRE mostrar botão de reenvio de emails se houver itens incompletos
+				$incomplete_items = array();
+				if ( ! empty( $result['items_checked'] ) ) {
+					foreach ( $result['items_checked'] as $item ) {
+						if ( 'incomplete' === $item['status'] ) {
+							$incomplete_items[] = $item;
+						}
+					}
+				}
+				
+				if ( ! empty( $incomplete_items ) && get_option( 'tcd_email_enabled', false ) ) : ?>
+					<div style="margin-top: 20px; padding: 20px; background: #f0f8ff; border: 2px solid #0073aa; border-radius: 5px;">
+						<h3 style="margin-top: 0; color: #0073aa;">
+							<span class="dashicons dashicons-email" style="margin-right: 5px;"></span>
+							<?php esc_html_e( 'Email Notifications', 'tainacan-document-checker' ); ?>
+						</h3>
+						<p style="font-size: 14px;">
+							<?php
+							printf(
+								/* translators: %d: number of items with issues */
+								esc_html__( 'Found %d items with missing or invalid documents that need notification.', 'tainacan-document-checker' ),
+								count( $incomplete_items )
+							);
+							?>
+						</p>
+						<p style="font-size: 13px; color: #666;">
+							<?php esc_html_e( 'Click the button below to send email notifications to the users who created these items.', 'tainacan-document-checker' ); ?>
+						</p>
+						
+						<button type="button" class="button button-primary button-hero" onclick="window.TCD.sendBatchNotifications(<?php echo esc_js( json_encode( $result['items_checked'] ) ); ?>)" style="margin-top: 10px;">
+							<span class="dashicons dashicons-email-alt" style="margin-right: 5px; margin-top: 4px;"></span>
+							<?php
+							printf(
+								/* translators: %d: number of notifications to send */
+								esc_html__( 'Send %d Email Notifications', 'tainacan-document-checker' ),
+								count( $incomplete_items )
+							);
+							?>
+						</button>
+						
+						<div id="tcd-batch-notification-result" style="margin-top: 15px;"></div>
+					</div>
+				<?php elseif ( ! empty( $incomplete_items ) && ! get_option( 'tcd_email_enabled', false ) ) : ?>
+					<div style="margin-top: 20px; padding: 15px; background: #fff3cd; border: 1px solid #ffc107; border-radius: 5px;">
+						<p style="margin: 0;">
+							<strong><?php esc_html_e( 'Email notifications are disabled.', 'tainacan-document-checker' ); ?></strong>
+							<?php esc_html_e( 'Enable them in the Email Configuration tab to send notifications.', 'tainacan-document-checker' ); ?>
+						</p>
 					</div>
 				<?php endif; ?>
 			</div>
