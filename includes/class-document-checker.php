@@ -629,17 +629,19 @@ class TCD_Document_Checker {
 	/**
 	 * Clear all cached results.
 	 *
-	 * @return void
+	 * @return int Number of cache entries cleared.
 	 */
-	public function clear_cache(): void {
+	public function clear_all_caches(): int {
 		global $wpdb;
 
 		// Clear all transients that start with 'tcd_'
-		$wpdb->query(
+		$cleared = $wpdb->query(
 			"DELETE FROM {$wpdb->options} 
 			WHERE option_name LIKE '_transient_tcd_%' 
 			OR option_name LIKE '_transient_timeout_tcd_%'"
 		);
+
+		return (int) $cleared;
 	}
 
 	/**
