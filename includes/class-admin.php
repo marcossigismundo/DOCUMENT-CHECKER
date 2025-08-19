@@ -672,6 +672,7 @@ Best regards,
 								<input type="checkbox" id="tcd-send-email-batch" name="send_email" value="1">
 								<?php esc_html_e( 'Send email notifications for items with missing/invalid documents', 'tainacan-document-checker' ); ?>
 							</label>
+							<p class="description"><?php esc_html_e( 'Emails will be sent to users associated with items that have missing documents.', 'tainacan-document-checker' ); ?></p>
 						</td>
 					</tr>
 					<?php endif; ?>
@@ -681,11 +682,16 @@ Best regards,
 					<button type="submit" class="button button-primary">
 						<?php esc_html_e( 'Start Batch Check', 'tainacan-document-checker' ); ?>
 					</button>
+					<?php if ( $email_enabled ) : ?>
+					<span style="margin-left: 10px; color: #666;">
+						<?php esc_html_e( 'Note: Enable email notifications in the Email Configuration tab first.', 'tainacan-document-checker' ); ?>
+					</span>
+					<?php endif; ?>
 				</p>
 			</form>
 			
-			<div id="tcd-batch-progress" style="display: none;">
-				<div class="tcd-progress-bar" style="width: 0%;">
+			<div id="tcd-batch-progress" class="tcd-progress-container">
+				<div class="tcd-progress-bar">
 					<span class="tcd-progress-text">0%</span>
 				</div>
 			</div>
