@@ -363,6 +363,62 @@
                     $resultDiv.html('<div class="notice notice-error"><p>Failed to send emails. Error: ' + error + '</p></div>');
                 }
             });
+        },
+
+        // Função para enviar notificações após batch check
+        sendBatchNotifications: function(itemsChecked) {
+            console.log('TCD: Sending notifications for batch check results');
+            
+            const $resultDiv = $('#tcd-batch-notification-result');
+            
+            // Filtrar apenas itens incompletos
+            const incompleteItems = itemsChecked.filter(function(item) {
+                return item.status === 'incomplete';
+            });
+            
+            if (incompleteItems.length === 0) {
+                $resultDiv.html('<div class="notice notice-warning"><p>No items need notifications.</p></div>');
+                return;
+            }
+            
+            // Extrair IDs dos itens incompletos
+            const itemIds = incompleteItems.map(function(item) {
+                return item.id;
+            });
+            
+            console.log('TCD: Sending notifications for items:', itemIds);
+            
+            $resultDiv.html('<div class="notice notice-info"><p><span class="spinner is-active"></span> Sending email notifications...</p></div>');
+            
+            $.ajax({
+                url: tcd_ajax.ajax_url,
+                type: 'POST',
+                data: {
+                    action: 'tcd_send_notifications',
+                    item_ids: itemIds,
+                    nonce: tcd_ajax.nonce
+                },
+                success: function(response) {
+                    console.log('TCD: Notification response:', response);
+                    
+                    if (response.success) {
+                        const stats = response.data.stats || {};
+                        let message = '<strong>Email notifications sent!</strong><br>';
+                        message += 'Sent: ' + (stats.emails_sent || 0) + '<br>';
+                        message += 'Failed: ' + (stats.emails_failed || 0) + '<br>';
+                        if (stats.users_notified && stats.users_notified.length > 0) {
+                            message += 'Users notified: ' + stats.users_notified.length;
+                        }
+                        $resultDiv.html('<div class="notice notice-success"><p>' + message + '</p></div>');
+                    } else {
+                        $resultDiv.html('<div class="notice notice-error"><p><strong>Error:</strong> ' + response.data + '</p></div>');
+                    }
+                },
+                error: function(xhr, status, error) {
+                    console.error('TCD: Notification error:', status, error);
+                    $resultDiv.html('<div class="notice notice-error"><p><strong>Failed to send notifications.</strong> Error: ' + error + '</p></div>');
+                }
+            });
         }
     };
 
