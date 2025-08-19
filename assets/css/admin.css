@@ -1,1 +1,326 @@
 
+/**
+ * Tainacan Document Checker Admin Styles
+ *
+ * @package TainacanDocumentChecker
+ * @since 1.0.0
+ */
+
+/* Tab Navigation */
+.nav-tab-wrapper {
+    margin-bottom: 20px;
+}
+
+/* Forms */
+.tcd-form {
+    background: #fff;
+    padding: 20px;
+    border: 1px solid #ccd0d4;
+    box-shadow: 0 1px 1px rgba(0,0,0,.04);
+}
+
+.tcd-form .form-table {
+    margin-top: 0;
+}
+
+/* Results Container */
+.tcd-result-container {
+    margin-top: 20px;
+    animation: fadeIn 0.3s ease-in;
+}
+
+@keyframes fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+
+.tcd-check-result {
+    background: #fff;
+    padding: 20px;
+    border: 1px solid #ccd0d4;
+    box-shadow: 0 1px 1px rgba(0,0,0,.04);
+    margin-top: 10px;
+}
+
+.tcd-status-complete {
+    color: #46b450;
+    font-weight: bold;
+}
+
+.tcd-status-incomplete {
+    color: #d63638;
+    font-weight: bold;
+}
+
+.tcd-status-error {
+    color: #d63638;
+    font-weight: bold;
+}
+
+/* Document Lists */
+.tcd-documents-list,
+.tcd-missing-documents,
+.tcd-found-documents,
+.tcd-invalid-documents {
+    margin: 15px 0;
+}
+
+.tcd-documents-list h4,
+.tcd-missing-documents h4,
+.tcd-found-documents h4,
+.tcd-invalid-documents h4 {
+    margin-bottom: 10px;
+    font-weight: 600;
+}
+
+.tcd-documents-list ul,
+.tcd-missing-documents ul,
+.tcd-found-documents ul,
+.tcd-invalid-documents ul {
+    margin-left: 20px;
+    list-style: disc;
+}
+
+.tcd-doc-found {
+    color: #46b450;
+}
+
+.tcd-doc-missing {
+    color: #d63638;
+}
+
+/* Document Management */
+#tcd-documents-list {
+    margin: 10px 0;
+}
+
+.tcd-document-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 10px;
+    padding: 10px;
+    background: #f9f9f9;
+    border: 1px solid #ddd;
+    border-radius: 3px;
+}
+
+.tcd-document-item:hover {
+    background: #f1f1f1;
+}
+
+.tcd-document-item input[type="text"] {
+    flex: 1;
+    padding: 5px 10px;
+}
+
+.tcd-document-item .dashicons-move {
+    cursor: move;
+    color: #666;
+}
+
+.tcd-document-item .dashicons-move:hover {
+    color: #333;
+}
+
+.tcd-document-placeholder {
+    background: #e5e5e5;
+    border: 2px dashed #bbb;
+    height: 44px;
+    margin-bottom: 10px;
+}
+
+.tcd-remove-document {
+    padding: 0 8px !important;
+    min-width: 30px;
+}
+
+.tcd-remove-document .dashicons {
+    margin: 0;
+    line-height: 28px;
+}
+
+/* Progress Bar */
+#tcd-batch-progress {
+    margin: 20px 0;
+    background: #f0f0f0;
+    border-radius: 5px;
+    padding: 3px;
+    display: none;
+}
+
+.tcd-progress-bar {
+    background: #2271b1;
+    height: 20px;
+    border-radius: 3px;
+    transition: width 0.3s ease;
+    position: relative;
+}
+
+.tcd-progress-text {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    color: #fff;
+    font-weight: bold;
+    font-size: 12px;
+}
+
+/* Batch Results */
+.tcd-batch-result {
+    background: #fff;
+    padding: 20px;
+    border: 1px solid #ccd0d4;
+    margin-top: 10px;
+}
+
+.tcd-batch-summary {
+    background: #f9f9f9;
+    padding: 15px;
+    border-radius: 3px;
+    margin-bottom: 20px;
+}
+
+.tcd-batch-summary p {
+    margin: 5px 0;
+    font-size: 14px;
+}
+
+/* Email Settings */
+.tcd-email-settings {
+    max-width: 800px;
+}
+
+.tcd-smtp-setting {
+    display: none;
+}
+
+.tcd-smtp-auth-setting {
+    display: none;
+}
+
+.tcd-smtp-test {
+    background: #fff;
+    border: 1px solid #ccd0d4;
+    padding: 15px;
+    margin: 20px 0;
+}
+
+.tcd-email-stats {
+    background: #f9f9f9;
+    padding: 15px;
+    margin-bottom: 20px;
+    border-radius: 5px;
+}
+
+.tcd-email-stats > div {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 15px;
+}
+
+.tcd-email-actions {
+    margin-top: 20px;
+    padding-top: 20px;
+    border-top: 1px solid #ddd;
+}
+
+/* History Table */
+.tcd-history-table {
+    width: 100%;
+    background: #fff;
+}
+
+.tcd-history-table th {
+    font-weight: 600;
+    background: #f9f9f9;
+}
+
+.tcd-history-table td,
+.tcd-history-table th {
+    padding: 10px;
+    text-align: left;
+}
+
+.tcd-history-table tr:nth-child(even) {
+    background: #f9f9f9;
+}
+
+/* Debug Information */
+.tcd-debug {
+    margin-top: 20px;
+    padding: 15px;
+    background: #f0f0f0;
+    border: 1px solid #ddd;
+}
+
+.tcd-debug h4 {
+    margin-top: 0;
+}
+
+.tcd-debug pre {
+    background: #fff;
+    padding: 10px;
+    border: 1px solid #ddd;
+    overflow-x: auto;
+    max-height: 300px;
+    overflow-y: auto;
+}
+
+/* Spinner */
+.spinner.is-active {
+    float: none;
+    margin: 0 5px;
+}
+
+/* Responsive */
+@media screen and (max-width: 782px) {
+    .tcd-document-item {
+        flex-wrap: wrap;
+    }
+    
+    .tcd-document-item input[type="text"] {
+        width: 100%;
+        flex: none;
+    }
+    
+    .tcd-email-stats > div {
+        grid-template-columns: 1fr;
+    }
+}
+
+/* Notices */
+.notice {
+    margin: 10px 0;
+}
+
+.notice p {
+    margin: 0.5em 0;
+}
+
+/* Buttons */
+.button.processing {
+    opacity: 0.6;
+    pointer-events: none;
+}
+
+/* Tabs Content */
+.tcd-tab-content {
+    animation: fadeIn 0.3s ease-in;
+}
+
+.tcd-tab-content h2 {
+    margin-top: 0;
+}
+
+/* Loading State */
+.tcd-loading {
+    text-align: center;
+    padding: 20px;
+}
+
+.tcd-loading .spinner {
+    float: none;
+    margin: 0 auto;
+}
