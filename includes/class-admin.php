@@ -1,6 +1,6 @@
 <?php
 /**
- * Admin Interface Class
+ * Admin UI Controller Class
  *
  * @package TainacanDocumentChecker
  * @since 1.0.0
@@ -12,11 +12,12 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 /**
- * Admin interface and settings management.
+ * Admin UI controller for menu registration and settings.
  *
  * @since 1.0.0
  */
 class TCD_Admin {
+
 	/**
 	 * Current admin tab.
 	 *
@@ -25,63 +26,61 @@ class TCD_Admin {
 	private string $current_tab;
 
 	/**
-	 * Document checker instance.
+	 * Email handler instance.
 	 *
-	 * @var TCD_Document_Checker
+	 * @var TCD_Email_Handler
 	 */
-	private TCD_Document_Checker $document_checker;
+	private TCD_Email_Handler $email_handler;
 
 	/**
 	 * Constructor.
 	 */
 	public function __construct() {
-		$this->document_checker = new TCD_Document_Checker();
-		$this->current_tab = isset( $_GET['tab'] ) ? sanitize_text_field( $_GET['tab'] ) : 'single';
+		$this->email_handler = new TCD_Email_Handler();
 	}
 
 	/**
-	 * Initialize admin hooks.
+	 * Initialize admin functionality.
 	 *
 	 * @return void
 	 */
 	public function init(): void {
-		add_action( 'admin_menu', array( $this, 'add_admin_menu' ) );
+		add_action( 'admin_menu', array( $this, 'register_admin_menu' ) );
+		add_action( 'admin_init', array( $this, 'register_settings' ) );
 		add_action( 'admin_enqueue_scripts', array( $this, 'enqueue_admin_assets' ) );
-		add_action( 'admin_post_tcd_save_settings', array( $this, 'save_settings' ) );
-		add_action( 'admin_post_tcd_save_documents', array( $this, 'save_documents' ) );
-		
-		// Add AJAX handler for connection test
-		add_action( 'wp_ajax_tcd_test_api_connection', array( $this, 'test_api_connection' ) );
+		add_action( 'wp_ajax_tcd_test_smtp', array( $this, 'handle_smtp_test' ) );
 	}
 
 	/**
-	 * Add admin menu pages.
+	 * Register admin menu.
 	 *
 	 * @return void
 	 */
-	public function add_admin_menu(): void {
+	public function register_admin_menu(): void {
 		add_menu_page(
-			__( 'Document Checker', 'tainacan-document-checker' ),
+			__( 'Tainacan Document Checker', 'tainacan-document-checker' ),
 			__( 'Document Checker', 'tainacan-document-checker' ),
 			'manage_options',
 			'tainacan-document-checker',
 			array( $this, 'render_admin_page' ),
-			'dashicons-yes-alt',
-			30
+			'dashicons-media-document',
+			80
 		);
 	}
 
 	/**
-	 * Enqueue admin assets.
-	 *
-	 * @param string $hook Current admin page hook.
+	 * Enqueue admin styles and scripts.
+	 * 
+	 * @param string $hook_suffix The current admin page.
 	 * @return void
 	 */
-	public function enqueue_admin_assets( string $hook ): void {
-		if ( 'toplevel_page_tainacan-document-checker' !== $hook ) {
+	public function enqueue_admin_assets( $hook_suffix ): void {
+		// Only load on our plugin pages
+		if ( 'toplevel_page_tainacan-document-checker' !== $hook_suffix ) {
 			return;
 		}
 
+		// Enqueue styles
 		wp_enqueue_style(
 			'tcd-admin',
 			TCD_PLUGIN_URL . 'assets/css/admin.css',
@@ -89,14 +88,16 @@ class TCD_Admin {
 			TCD_VERSION
 		);
 
+		// Enqueue scripts
 		wp_enqueue_script(
 			'tcd-admin',
 			TCD_PLUGIN_URL . 'assets/js/admin.js',
-			array( 'jquery' ),
+			array( 'jquery', 'jquery-ui-sortable' ),
 			TCD_VERSION,
 			true
 		);
 
+		// Localize script with AJAX data
 		wp_localize_script(
 			'tcd-admin',
 			'tcd_ajax',
@@ -104,12 +105,384 @@ class TCD_Admin {
 				'ajax_url' => admin_url( 'admin-ajax.php' ),
 				'nonce'    => wp_create_nonce( 'tcd_ajax_nonce' ),
 				'strings'  => array(
-					'checking'       => __( 'Checking...', 'tainacan-document-checker' ),
-					'check_complete' => __( 'Check complete', 'tainacan-document-checker' ),
-					'error'          => __( 'An error occurred', 'tainacan-document-checker' ),
+					'checking'           => __( 'Checking...', 'tainacan-document-checker' ),
+					'check_complete'     => __( 'Check complete', 'tainacan-document-checker' ),
+					'error'              => __( 'An error occurred', 'tainacan-document-checker' ),
+					'item_required'      => __( 'Please enter an item ID', 'tainacan-document-checker' ),
+					'collection_required'=> __( 'Please enter a collection ID', 'tainacan-document-checker' ),
+					'cache_cleared'      => __( 'Cache cleared successfully', 'tainacan-document-checker' ),
+					'email_sent'         => __( 'Email notification sent successfully', 'tainacan-document-checker' ),
+					'check_documents'    => __( 'Check Documents', 'tainacan-document-checker' ),
+					'document_name'      => __( 'Document name', 'tainacan-document-checker' ),
+				),
+				'debug' => (bool) get_option( 'tcd_debug_mode', false ),
+			)
+		);
+	}
+
+	/**
+	 * Register plugin settings.
+	 *
+	 * @return void
+	 */
+	public function register_settings(): void {
+		// API Settings.
+		register_setting(
+			'tcd_settings',
+			'tcd_api_url',
+			array(
+				'type'              => 'string',
+				'sanitize_callback' => 'esc_url_raw',
+				'default'           => get_site_url() . '/wp-json/tainacan/v2',
+			)
+		);
+
+		register_setting(
+			'tcd_settings',
+			'tcd_collection_id',
+			array(
+				'type'              => 'integer',
+				'sanitize_callback' => 'absint',
+				'default'           => 0,
+			)
+		);
+
+		// Document Settings.
+		register_setting(
+			'tcd_settings',
+			'tcd_required_documents',
+			array(
+				'type'              => 'array',
+				'sanitize_callback' => array( $this, 'sanitize_documents_list' ),
+				'default'           => array(
+					'comprovante_endereco',
+					'documento_identidade',
+					'documento_responsavel',
 				),
 			)
 		);
+
+		// General Settings.
+		register_setting(
+			'tcd_settings',
+			'tcd_debug_mode',
+			array(
+				'type'              => 'boolean',
+				'sanitize_callback' => 'rest_sanitize_boolean',
+				'default'           => false,
+			)
+		);
+
+		register_setting(
+			'tcd_settings',
+			'tcd_cache_duration',
+			array(
+				'type'              => 'integer',
+				'sanitize_callback' => 'absint',
+				'default'           => 300,
+			)
+		);
+
+		register_setting(
+			'tcd_settings',
+			'tcd_auto_clear_cache',
+			array(
+				'type'              => 'boolean',
+				'sanitize_callback' => 'rest_sanitize_boolean',
+				'default'           => true,
+			)
+		);
+
+		// Email Settings
+		$this->register_email_settings();
+	}
+
+	/**
+	 * Register email-specific settings.
+	 *
+	 * @return void
+	 */
+	private function register_email_settings(): void {
+		// Email General Settings
+		register_setting(
+			'tcd_email_settings',
+			'tcd_email_enabled',
+			array(
+				'type'              => 'boolean',
+				'sanitize_callback' => 'rest_sanitize_boolean',
+				'default'           => false,
+			)
+		);
+
+		register_setting(
+			'tcd_email_settings',
+			'tcd_email_html',
+			array(
+				'type'              => 'boolean',
+				'sanitize_callback' => 'rest_sanitize_boolean',
+				'default'           => false,
+			)
+		);
+
+		// SMTP Settings
+		register_setting(
+			'tcd_email_settings',
+			'tcd_smtp_enabled',
+			array(
+				'type'              => 'boolean',
+				'sanitize_callback' => 'rest_sanitize_boolean',
+				'default'           => false,
+			)
+		);
+
+		register_setting(
+			'tcd_email_settings',
+			'tcd_smtp_host',
+			array(
+				'type'              => 'string',
+				'sanitize_callback' => 'sanitize_text_field',
+				'default'           => '',
+			)
+		);
+
+		register_setting(
+			'tcd_email_settings',
+			'tcd_smtp_port',
+			array(
+				'type'              => 'integer',
+				'sanitize_callback' => 'absint',
+				'default'           => 587,
+			)
+		);
+
+		register_setting(
+			'tcd_email_settings',
+			'tcd_smtp_encryption',
+			array(
+				'type'              => 'string',
+				'sanitize_callback' => array( $this, 'sanitize_smtp_encryption' ),
+				'default'           => 'tls',
+			)
+		);
+
+		register_setting(
+			'tcd_email_settings',
+			'tcd_smtp_auth',
+			array(
+				'type'              => 'boolean',
+				'sanitize_callback' => 'rest_sanitize_boolean',
+				'default'           => true,
+			)
+		);
+
+		register_setting(
+			'tcd_email_settings',
+			'tcd_smtp_username',
+			array(
+				'type'              => 'string',
+				'sanitize_callback' => 'sanitize_text_field',
+				'default'           => '',
+			)
+		);
+
+		register_setting(
+			'tcd_email_settings',
+			'tcd_smtp_password',
+			array(
+				'type'              => 'string',
+				'sanitize_callback' => array( $this, 'sanitize_smtp_password' ),
+				'default'           => '',
+			)
+		);
+
+		register_setting(
+			'tcd_email_settings',
+			'tcd_smtp_from_email',
+			array(
+				'type'              => 'string',
+				'sanitize_callback' => 'sanitize_email',
+				'default'           => get_option( 'admin_email' ),
+			)
+		);
+
+		register_setting(
+			'tcd_email_settings',
+			'tcd_smtp_from_name',
+			array(
+				'type'              => 'string',
+				'sanitize_callback' => 'sanitize_text_field',
+				'default'           => get_bloginfo( 'name' ),
+			)
+		);
+
+		// Email Templates
+		register_setting(
+			'tcd_email_settings',
+			'tcd_email_subject',
+			array(
+				'type'              => 'string',
+				'sanitize_callback' => 'sanitize_text_field',
+				'default'           => __( 'Document Verification Required - {item_title}', 'tainacan-document-checker' ),
+			)
+		);
+
+		register_setting(
+			'tcd_email_settings',
+			'tcd_email_template',
+			array(
+				'type'              => 'string',
+				'sanitize_callback' => 'wp_kses_post',
+				'default'           => $this->get_default_email_template(),
+			)
+		);
+
+		register_setting(
+			'tcd_email_settings',
+			'tcd_batch_email_subject',
+			array(
+				'type'              => 'string',
+				'sanitize_callback' => 'sanitize_text_field',
+				'default'           => __( 'Multiple Documents Require Verification', 'tainacan-document-checker' ),
+			)
+		);
+
+		register_setting(
+			'tcd_email_settings',
+			'tcd_batch_email_template',
+			array(
+				'type'              => 'string',
+				'sanitize_callback' => 'wp_kses_post',
+				'default'           => $this->get_default_batch_email_template(),
+			)
+		);
+	}
+
+	/**
+	 * Sanitize SMTP encryption value.
+	 *
+	 * @param string $value Input value.
+	 * @return string Sanitized value.
+	 */
+	public function sanitize_smtp_encryption( $value ): string {
+		$valid = array( '', 'ssl', 'tls' );
+		return in_array( $value, $valid, true ) ? $value : 'tls';
+	}
+
+	/**
+	 * Sanitize SMTP password.
+	 *
+	 * @param string $value Input value.
+	 * @return string Sanitized value.
+	 */
+	public function sanitize_smtp_password( $value ): string {
+		// If empty, keep the existing password
+		if ( empty( $value ) || '••••••••' === $value ) {
+			return get_option( 'tcd_smtp_password', '' );
+		}
+		return $value;
+	}
+
+	/**
+	 * Get default email template.
+	 *
+	 * @return string Default template.
+	 */
+	private function get_default_email_template(): string {
+		return __( "Hello {user_name},
+
+This is a notification that the following item requires document verification:
+
+Item: {item_title}
+Item ID: {item_id}
+Item URL: {item_url}
+
+Missing Documents:
+{missing_documents}
+
+Invalid Documents:
+{invalid_documents}
+
+Please log in to your account and upload the required documents.
+
+If you have any questions, please contact our support team.
+
+Best regards,
+{site_name}
+{site_url}", 'tainacan-document-checker' );
+	}
+
+	/**
+	 * Get default batch email template.
+	 *
+	 * @return string Default batch template.
+	 */
+	private function get_default_batch_email_template(): string {
+		return __( "Hello {user_name},
+
+You have {total_items} items that require document verification:
+
+{items_list}
+
+Please log in to your account and upload the required documents.
+
+If you have any questions, please contact our support team.
+
+Best regards,
+{site_name}
+{site_url}", 'tainacan-document-checker' );
+	}
+
+	/**
+	 * Sanitize documents list.
+	 *
+	 * @param mixed $input Input value.
+	 * @return array Sanitized documents list.
+	 */
+	public function sanitize_documents_list( $input ): array {
+		if ( ! is_array( $input ) ) {
+			return array();
+		}
+
+		$sanitized = array();
+		foreach ( $input as $doc ) {
+			$doc = sanitize_file_name( trim( $doc ) );
+			if ( ! empty( $doc ) ) {
+				$sanitized[] = $doc;
+			}
+		}
+
+		return array_unique( $sanitized );
+	}
+
+	/**
+	 * Handle SMTP test AJAX request.
+	 *
+	 * @return void
+	 */
+	public function handle_smtp_test(): void {
+		// Verify nonce.
+		if ( ! check_ajax_referer( 'tcd_ajax_nonce', 'nonce', false ) ) {
+			wp_send_json_error( __( 'Security check failed.', 'tainacan-document-checker' ) );
+		}
+
+		// Check capability.
+		if ( ! current_user_can( 'manage_options' ) ) {
+			wp_send_json_error( __( 'Insufficient permissions.', 'tainacan-document-checker' ) );
+		}
+
+		$test_email = isset( $_POST['test_email'] ) ? sanitize_email( $_POST['test_email'] ) : '';
+		
+		if ( empty( $test_email ) ) {
+			wp_send_json_error( __( 'Please provide a valid email address.', 'tainacan-document-checker' ) );
+		}
+
+		$result = $this->email_handler->test_smtp_configuration( $test_email );
+		
+		if ( $result['success'] ) {
+			wp_send_json_success( $result['message'] );
+		} else {
+			wp_send_json_error( $result['message'] );
+		}
 	}
 
 	/**
@@ -118,64 +491,78 @@ class TCD_Admin {
 	 * @return void
 	 */
 	public function render_admin_page(): void {
-		?>
-		<div class="wrap">
-			<h1><?php echo esc_html( get_admin_page_title() ); ?></h1>
-			
-			<?php $this->render_tabs(); ?>
-			
-			<div class="tcd-tab-content">
-				<?php
-				switch ( $this->current_tab ) {
-					case 'batch':
-						$this->render_batch_check_tab();
-						break;
-					case 'history':
-						$this->render_history_tab();
-						break;
-					case 'settings':
-						$this->render_settings_tab();
-						break;
-					case 'documents':
-						$this->render_documents_tab();
-						break;
-					case 'single':
-					default:
-						$this->render_single_check_tab();
-						break;
-				}
-				?>
-			</div>
-		</div>
-		<?php
+		if ( ! current_user_can( 'manage_options' ) ) {
+			wp_die( esc_html__( 'You do not have sufficient permissions to access this page.', 'tainacan-document-checker' ) );
+		}
+
+		$this->current_tab = isset( $_GET['tab'] ) ? sanitize_key( $_GET['tab'] ) : 'single'; // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+
+		include TCD_PLUGIN_DIR . 'admin/admin-page.php';
 	}
 
 	/**
-	 * Render navigation tabs.
+	 * Get available admin tabs.
 	 *
-	 * @return void
+	 * @return array Tab configuration.
 	 */
-	private function render_tabs(): void {
-		$tabs = array(
+	public function get_admin_tabs(): array {
+		return array(
 			'single'    => __( 'Single Check', 'tainacan-document-checker' ),
 			'batch'     => __( 'Batch Check', 'tainacan-document-checker' ),
 			'history'   => __( 'History', 'tainacan-document-checker' ),
 			'settings'  => __( 'Settings', 'tainacan-document-checker' ),
 			'documents' => __( 'Manage Document Names', 'tainacan-document-checker' ),
+			'email'     => __( 'Email Configuration', 'tainacan-document-checker' ),
 		);
+	}
 
-		echo '<nav class="nav-tab-wrapper">';
-		foreach ( $tabs as $tab => $label ) {
-			$active = ( $this->current_tab === $tab ) ? ' nav-tab-active' : '';
-			$url    = add_query_arg( 'tab', $tab, admin_url( 'admin.php?page=tainacan-document-checker' ) );
-			printf(
-				'<a href="%s" class="nav-tab%s">%s</a>',
-				esc_url( $url ),
-				esc_attr( $active ),
-				esc_html( $label )
-			);
+	/**
+	 * Render tab navigation.
+	 *
+	 * @return void
+	 */
+	public function render_tab_navigation(): void {
+		$tabs = $this->get_admin_tabs();
+		?>
+		<nav class="nav-tab-wrapper">
+			<?php foreach ( $tabs as $tab_key => $tab_label ) : ?>
+				<a href="<?php echo esc_url( add_query_arg( 'tab', $tab_key ) ); ?>" 
+				   class="nav-tab <?php echo esc_attr( $this->current_tab === $tab_key ? 'nav-tab-active' : '' ); ?>">
+					<?php echo esc_html( $tab_label ); ?>
+				</a>
+			<?php endforeach; ?>
+		</nav>
+		<?php
+	}
+
+	/**
+	 * Render tab content.
+	 *
+	 * @return void
+	 */
+	public function render_tab_content(): void {
+		switch ( $this->current_tab ) {
+			case 'single':
+				$this->render_single_check_tab();
+				break;
+			case 'batch':
+				$this->render_batch_check_tab();
+				break;
+			case 'history':
+				$this->render_history_tab();
+				break;
+			case 'settings':
+				$this->render_settings_tab();
+				break;
+			case 'documents':
+				$this->render_documents_tab();
+				break;
+			case 'email':
+				$this->render_email_tab();
+				break;
+			default:
+				$this->render_single_check_tab();
 		}
-		echo '</nav>';
 	}
 
 	/**
@@ -184,29 +571,44 @@ class TCD_Admin {
 	 * @return void
 	 */
 	private function render_single_check_tab(): void {
+		$email_enabled = get_option( 'tcd_email_enabled', false );
 		?>
-		<div class="tcd-single-check">
+		<div class="tcd-tab-content tcd-single-check">
 			<h2><?php esc_html_e( 'Single Item Document Check', 'tainacan-document-checker' ); ?></h2>
 			
-			<table class="form-table">
-				<tr>
-					<th scope="row">
-						<label for="tcd_item_id"><?php esc_html_e( 'Item ID', 'tainacan-document-checker' ); ?></label>
-					</th>
-					<td>
-						<input type="number" id="tcd_item_id" name="tcd_item_id" class="regular-text" min="1">
-						<p class="description"><?php esc_html_e( 'Enter the ID of the Tainacan item to check.', 'tainacan-document-checker' ); ?></p>
-					</td>
-				</tr>
-			</table>
+			<form id="tcd-single-check-form" class="tcd-form">
+				<table class="form-table">
+					<tr>
+						<th scope="row">
+							<label for="tcd-item-id"><?php esc_html_e( 'Item ID', 'tainacan-document-checker' ); ?></label>
+						</th>
+						<td>
+							<input type="number" id="tcd-item-id" name="item_id" class="regular-text" required>
+							<p class="description"><?php esc_html_e( 'Enter the ID of the Tainacan item to check.', 'tainacan-document-checker' ); ?></p>
+						</td>
+					</tr>
+					<?php if ( $email_enabled ) : ?>
+					<tr>
+						<th scope="row"><?php esc_html_e( 'Email Notification', 'tainacan-document-checker' ); ?></th>
+						<td>
+							<label for="tcd-send-email-single">
+								<input type="checkbox" id="tcd-send-email-single" name="send_email" value="1">
+								<?php esc_html_e( 'Send email notification if documents are missing/invalid', 'tainacan-document-checker' ); ?>
+							</label>
+							<p class="description"><?php esc_html_e( 'Email will be sent to the user associated with this item.', 'tainacan-document-checker' ); ?></p>
+						</td>
+					</tr>
+					<?php endif; ?>
+				</table>
+				
+				<p class="submit">
+					<button type="submit" class="button button-primary">
+						<?php esc_html_e( 'Check Documents', 'tainacan-document-checker' ); ?>
+					</button>
+				</p>
+			</form>
 			
-			<p class="submit">
-				<button type="button" id="tcd-check-single" class="button button-primary">
-					<?php esc_html_e( 'Check Documents', 'tainacan-document-checker' ); ?>
-				</button>
-			</p>
-			
-			<div id="tcd-single-result" style="display:none;"></div>
+			<div id="tcd-single-result" class="tcd-result-container" style="display: none;"></div>
 		</div>
 		<?php
 	}
@@ -217,46 +619,78 @@ class TCD_Admin {
 	 * @return void
 	 */
 	private function render_batch_check_tab(): void {
+		$collection_id = get_option( 'tcd_collection_id', 0 );
+		$cache_duration = get_option( 'tcd_cache_duration', 300 );
+		$email_enabled = get_option( 'tcd_email_enabled', false );
 		?>
-		<div class="tcd-batch-check">
+		<div class="tcd-tab-content tcd-batch-check">
 			<h2><?php esc_html_e( 'Batch Document Check', 'tainacan-document-checker' ); ?></h2>
 			
-			<table class="form-table">
-				<tr>
-					<th scope="row">
-						<label for="tcd_collection_id"><?php esc_html_e( 'Collection ID', 'tainacan-document-checker' ); ?></label>
-					</th>
-					<td>
-						<input type="number" id="tcd_collection_id" name="tcd_collection_id" 
-						       value="<?php echo esc_attr( get_option( 'tcd_default_collection_id', '' ) ); ?>" 
-						       class="regular-text" min="1">
-						<p class="description"><?php esc_html_e( 'Enter the ID of the Tainacan collection to check.', 'tainacan-document-checker' ); ?></p>
-					</td>
-				</tr>
-				<tr>
-					<th scope="row">
-						<label for="tcd_per_page"><?php esc_html_e( 'Items per page', 'tainacan-document-checker' ); ?></label>
-					</th>
-					<td>
-						<input type="number" id="tcd_per_page" name="tcd_per_page" value="20" class="small-text" min="1" max="100">
-						<p class="description"><?php esc_html_e( 'Number of items to process per batch (1-100).', 'tainacan-document-checker' ); ?></p>
-					</td>
-				</tr>
-			</table>
+			<?php if ( $cache_duration > 0 ) : ?>
+				<div class="notice notice-info">
+					<p>
+						<?php
+						printf(
+							/* translators: %d: cache duration in seconds */
+							esc_html__( 'Results are cached for %d seconds. Clear cache to see new items immediately.', 'tainacan-document-checker' ),
+							$cache_duration
+						);
+						?>
+						<button type="button" id="tcd-clear-cache-btn" class="button button-small" style="margin-left: 10px;">
+							<?php esc_html_e( 'Clear Cache Now', 'tainacan-document-checker' ); ?>
+						</button>
+					</p>
+				</div>
+			<?php endif; ?>
 			
-			<p class="submit">
-				<button type="button" id="tcd-check-batch" class="button button-primary">
-					<?php esc_html_e( 'Start Batch Check', 'tainacan-document-checker' ); ?>
-				</button>
-			</p>
+			<form id="tcd-batch-check-form" class="tcd-form">
+				<table class="form-table">
+					<tr>
+						<th scope="row">
+							<label for="tcd-collection-id"><?php esc_html_e( 'Collection ID', 'tainacan-document-checker' ); ?></label>
+						</th>
+						<td>
+							<input type="number" id="tcd-collection-id" name="collection_id" 
+							       value="<?php echo esc_attr( $collection_id ); ?>" class="regular-text" required>
+							<p class="description"><?php esc_html_e( 'Enter the ID of the Tainacan collection to check.', 'tainacan-document-checker' ); ?></p>
+						</td>
+					</tr>
+					<tr>
+						<th scope="row">
+							<label for="tcd-per-page"><?php esc_html_e( 'Items per page', 'tainacan-document-checker' ); ?></label>
+						</th>
+						<td>
+							<input type="number" id="tcd-per-page" name="per_page" value="20" min="1" max="100" class="small-text">
+							<p class="description"><?php esc_html_e( 'Number of items to process per batch (1-100).', 'tainacan-document-checker' ); ?></p>
+						</td>
+					</tr>
+					<?php if ( $email_enabled ) : ?>
+					<tr>
+						<th scope="row"><?php esc_html_e( 'Email Notifications', 'tainacan-document-checker' ); ?></th>
+						<td>
+							<label for="tcd-send-email-batch">
+								<input type="checkbox" id="tcd-send-email-batch" name="send_email" value="1">
+								<?php esc_html_e( 'Send email notifications for items with missing/invalid documents', 'tainacan-document-checker' ); ?>
+							</label>
+						</td>
+					</tr>
+					<?php endif; ?>
+				</table>
+				
+				<p class="submit">
+					<button type="submit" class="button button-primary">
+						<?php esc_html_e( 'Start Batch Check', 'tainacan-document-checker' ); ?>
+					</button>
+				</p>
+			</form>
 			
-			<div id="tcd-batch-progress" style="display:none;">
-				<h3><?php esc_html_e( 'Processing...', 'tainacan-document-checker' ); ?></h3>
-				<progress id="tcd-progress-bar" max="100" value="0"></progress>
-				<p id="tcd-progress-text"></p>
+			<div id="tcd-batch-progress" style="display: none;">
+				<div class="tcd-progress-bar" style="width: 0%;">
+					<span class="tcd-progress-text">0%</span>
+				</div>
 			</div>
 			
-			<div id="tcd-batch-result" style="display:none;"></div>
+			<div id="tcd-batch-result" class="tcd-result-container" style="display: none;"></div>
 		</div>
 		<?php
 	}
@@ -267,15 +701,16 @@ class TCD_Admin {
 	 * @return void
 	 */
 	private function render_history_tab(): void {
-		$history = $this->document_checker->get_all_history( 100 );
+		$document_checker = new TCD_Document_Checker();
+		$history = $document_checker->get_all_history( 100 );
 		?>
-		<div class="tcd-history">
+		<div class="tcd-tab-content tcd-history">
 			<h2><?php esc_html_e( 'Check History', 'tainacan-document-checker' ); ?></h2>
 			
 			<?php if ( empty( $history ) ) : ?>
 				<p><?php esc_html_e( 'No document checks have been performed yet.', 'tainacan-document-checker' ); ?></p>
 			<?php else : ?>
-				<table class="wp-list-table widefat fixed striped">
+				<table class="widefat tcd-history-table">
 					<thead>
 						<tr>
 							<th><?php esc_html_e( 'Date', 'tainacan-document-checker' ); ?></th>
@@ -319,19 +754,21 @@ class TCD_Admin {
 	 */
 	private function render_settings_tab(): void {
 		if ( isset( $_GET['settings-updated'] ) ) {
-			?>
-			<div class="notice notice-success is-dismissible">
-				<p><?php esc_html_e( 'Settings saved.', 'tainacan-document-checker' ); ?></p>
-			</div>
-			<?php
+			add_settings_error(
+				'tcd_messages',
+				'tcd_message',
+				__( 'Settings saved successfully!', 'tainacan-document-checker' ),
+				'updated'
+			);
 		}
+		
+		settings_errors( 'tcd_messages' );
 		?>
-		<div class="tcd-settings">
+		<div class="tcd-tab-content tcd-settings">
 			<h2><?php esc_html_e( 'Plugin Settings', 'tainacan-document-checker' ); ?></h2>
 			
-			<form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>">
-				<?php wp_nonce_field( 'tcd_save_settings', 'tcd_settings_nonce' ); ?>
-				<input type="hidden" name="action" value="tcd_save_settings">
+			<form method="post" action="options.php">
+				<?php settings_fields( 'tcd_settings' ); ?>
 				
 				<h3><?php esc_html_e( 'API Configuration', 'tainacan-document-checker' ); ?></h3>
 				<table class="form-table">
@@ -341,78 +778,18 @@ class TCD_Admin {
 						</th>
 						<td>
 							<input type="url" id="tcd_api_url" name="tcd_api_url" 
-							       value="<?php echo esc_attr( get_option( 'tcd_api_url', get_site_url() . '/wp-json/tainacan/v2' ) ); ?>" 
-							       class="regular-text">
+							       value="<?php echo esc_attr( get_option( 'tcd_api_url' ) ); ?>" class="large-text">
 							<p class="description"><?php esc_html_e( 'Base URL for Tainacan REST API (e.g., https://yoursite.com/wp-json/tainacan/v2)', 'tainacan-document-checker' ); ?></p>
 						</td>
 					</tr>
 					<tr>
 						<th scope="row">
-							<label for="tcd_default_collection_id"><?php esc_html_e( 'Default Collection ID', 'tainacan-document-checker' ); ?></label>
+							<label for="tcd_collection_id"><?php esc_html_e( 'Default Collection ID', 'tainacan-document-checker' ); ?></label>
 						</th>
 						<td>
-							<input type="number" id="tcd_default_collection_id" name="tcd_default_collection_id" 
-							       value="<?php echo esc_attr( get_option( 'tcd_default_collection_id', '' ) ); ?>" 
-							       class="regular-text" min="1">
+							<input type="number" id="tcd_collection_id" name="tcd_collection_id" 
+							       value="<?php echo esc_attr( get_option( 'tcd_collection_id', 0 ) ); ?>" class="small-text">
 							<p class="description"><?php esc_html_e( 'Default collection ID for batch checks.', 'tainacan-document-checker' ); ?></p>
-						</td>
-					</tr>
-				</table>
-
-				<h3><?php esc_html_e( 'SSL/HTTPS Configuration', 'tainacan-document-checker' ); ?></h3>
-				<table class="form-table">
-					<tr>
-						<th scope="row">
-							<label for="tcd_ssl_verify"><?php esc_html_e( 'SSL Verification', 'tainacan-document-checker' ); ?></label>
-						</th>
-						<td>
-							<label>
-								<input type="checkbox" id="tcd_ssl_verify" name="tcd_ssl_verify" value="1" 
-								       <?php checked( get_option( 'tcd_ssl_verify', true ) ); ?>>
-								<?php esc_html_e( 'Enable SSL certificate verification', 'tainacan-document-checker' ); ?>
-							</label>
-							<p class="description">
-								<?php esc_html_e( 'Disable this option only for development/localhost environments. Keep enabled for production.', 'tainacan-document-checker' ); ?>
-							</p>
-							<?php 
-							$api_url = get_option( 'tcd_api_url' );
-							if ( strpos( $api_url, 'localhost' ) !== false || 
-							     strpos( $api_url, '127.0.0.1' ) !== false ) : ?>
-								<div class="notice notice-warning inline">
-									<p>
-										<strong><?php esc_html_e( 'Localhost Detected:', 'tainacan-document-checker' ); ?></strong>
-										<?php esc_html_e( 'Your API URL appears to be pointing to localhost. Consider disabling SSL verification for this environment.', 'tainacan-document-checker' ); ?>
-									</p>
-								</div>
-							<?php endif; ?>
-						</td>
-					</tr>
-					<tr>
-						<th scope="row">
-							<label for="tcd_http_timeout"><?php esc_html_e( 'HTTP Timeout', 'tainacan-document-checker' ); ?></label>
-						</th>
-						<td>
-							<input type="number" id="tcd_http_timeout" name="tcd_http_timeout" 
-							       value="<?php echo esc_attr( get_option( 'tcd_http_timeout', 30 ) ); ?>" 
-							       min="5" max="300" step="5" class="small-text">
-							<span><?php esc_html_e( 'seconds', 'tainacan-document-checker' ); ?></span>
-							<p class="description">
-								<?php esc_html_e( 'Maximum time to wait for API responses (5-300 seconds).', 'tainacan-document-checker' ); ?>
-							</p>
-						</td>
-					</tr>
-					<tr>
-						<th scope="row">
-							<?php esc_html_e( 'Connection Test', 'tainacan-document-checker' ); ?>
-						</th>
-						<td>
-							<button type="button" id="tcd-test-connection" class="button button-secondary">
-								<?php esc_html_e( 'Test API Connection', 'tainacan-document-checker' ); ?>
-							</button>
-							<span id="tcd-test-result" style="margin-left: 10px;"></span>
-							<p class="description">
-								<?php esc_html_e( 'Test the connection to the Tainacan API with current settings.', 'tainacan-document-checker' ); ?>
-							</p>
 						</td>
 					</tr>
 				</table>
@@ -426,7 +803,7 @@ class TCD_Admin {
 						<td>
 							<input type="number" id="tcd_cache_duration" name="tcd_cache_duration" 
 							       value="<?php echo esc_attr( get_option( 'tcd_cache_duration', 300 ) ); ?>" 
-							       class="small-text" min="0" max="3600">
+							       min="0" max="3600" class="small-text">
 							<span><?php esc_html_e( 'seconds', 'tainacan-document-checker' ); ?></span>
 							<p class="description"><?php esc_html_e( 'How long to cache batch check results (0-3600 seconds).', 'tainacan-document-checker' ); ?></p>
 						</td>
@@ -443,63 +820,10 @@ class TCD_Admin {
 						</td>
 					</tr>
 				</table>
-
-				<h3><?php esc_html_e( 'System Information', 'tainacan-document-checker' ); ?></h3>
-				<div class="tcd-system-info" style="background: #f0f0f1; padding: 10px; border-radius: 3px;">
-					<p><strong>PHP Version:</strong> <?php echo PHP_VERSION; ?></p>
-					<p><strong>cURL Version:</strong> <?php 
-						if ( function_exists( 'curl_version' ) ) {
-							$curl_version = curl_version();
-							echo esc_html( $curl_version['version'] . ' / SSL: ' . $curl_version['ssl_version'] );
-						} else {
-							echo 'Not available';
-						}
-					?></p>
-					<p><strong>WordPress Version:</strong> <?php echo get_bloginfo( 'version' ); ?></p>
-					<p><strong>Site URL:</strong> <?php echo esc_url( get_site_url() ); ?></p>
-					<p><strong>API URL:</strong> <?php echo esc_url( get_option( 'tcd_api_url' ) ); ?></p>
-				</div>
 				
-				<p class="submit">
-					<input type="submit" name="submit" id="submit" class="button button-primary" 
-					       value="<?php esc_attr_e( 'Save Changes', 'tainacan-document-checker' ); ?>">
-				</p>
+				<?php submit_button(); ?>
 			</form>
 		</div>
-
-		<script>
-		jQuery(document).ready(function($) {
-			$('#tcd-test-connection').on('click', function() {
-				var $button = $(this);
-				var $result = $('#tcd-test-result');
-				
-				$button.prop('disabled', true);
-				$result.html('<span class="spinner is-active" style="float: none;"></span> Testing...');
-				
-				$.ajax({
-					url: ajaxurl,
-					type: 'POST',
-					data: {
-						action: 'tcd_test_api_connection',
-						nonce: '<?php echo wp_create_nonce( 'tcd_test_connection' ); ?>'
-					},
-					success: function(response) {
-						if (response.success) {
-							$result.html('<span style="color: green;">✓ ' + response.data.message + '</span>');
-						} else {
-							$result.html('<span style="color: red;">✗ ' + response.data.message + '</span>');
-						}
-					},
-					error: function() {
-						$result.html('<span style="color: red;">✗ Connection test failed</span>');
-					},
-					complete: function() {
-						$button.prop('disabled', false);
-					}
-				});
-			});
-		});
-		</script>
 		<?php
 	}
 
@@ -509,199 +833,352 @@ class TCD_Admin {
 	 * @return void
 	 */
 	private function render_documents_tab(): void {
-		$documents = get_option( 'tcd_required_documents', array() );
+		if ( isset( $_POST['tcd_required_documents'] ) && check_admin_referer( 'tcd_save_documents' ) ) {
+			$documents = $this->sanitize_documents_list( $_POST['tcd_required_documents'] );
+			update_option( 'tcd_required_documents', $documents );
+			
+			echo '<div class="notice notice-success"><p>' . esc_html__( 'Document names saved successfully!', 'tainacan-document-checker' ) . '</p></div>';
+		}
+		
+		$required_documents = get_option( 'tcd_required_documents', array() );
 		?>
-		<div class="tcd-documents">
+		<div class="tcd-tab-content tcd-documents">
 			<h2><?php esc_html_e( 'Manage Required Document Names', 'tainacan-document-checker' ); ?></h2>
 			
-			<form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>">
-				<?php wp_nonce_field( 'tcd_save_documents', 'tcd_documents_nonce' ); ?>
-				<input type="hidden" name="action" value="tcd_save_documents">
+			<form method="post" action="">
+				<?php wp_nonce_field( 'tcd_save_documents' ); ?>
 				
+				<p><?php esc_html_e( 'List of document names that must be attached to each item. These names will be matched against attachment filenames, titles, alt text, and captions.', 'tainacan-document-checker' ); ?></p>
+				
+				<div id="tcd-documents-list">
+					<?php foreach ( $required_documents as $doc ) : ?>
+						<div class="tcd-document-item">
+							<span class="dashicons dashicons-move"></span>
+							<input type="text" name="tcd_required_documents[]" value="<?php echo esc_attr( $doc ); ?>" placeholder="<?php esc_attr_e( 'Document name', 'tainacan-document-checker' ); ?>" required>
+							<button type="button" class="button tcd-remove-document">
+								<span class="dashicons dashicons-no"></span>
+							</button>
+						</div>
+					<?php endforeach; ?>
+				</div>
+				
+				<p>
+					<button type="button" id="tcd-add-document-btn" class="button">
+						<span class="dashicons dashicons-plus"></span>
+						<?php esc_html_e( 'Add Document', 'tainacan-document-checker' ); ?>
+					</button>
+				</p>
+				
+				<p class="submit">
+					<button type="submit" class="button button-primary">
+						<?php esc_html_e( 'Save Document Names', 'tainacan-document-checker' ); ?>
+					</button>
+				</p>
+			</form>
+		</div>
+		<?php
+	}
+
+	/**
+	 * Render email configuration tab.
+	 *
+	 * @return void
+	 */
+	private function render_email_tab(): void {
+		if ( isset( $_GET['settings-updated'] ) ) {
+			add_settings_error(
+				'tcd_email_messages',
+				'tcd_email_message',
+				__( 'Email settings saved successfully!', 'tainacan-document-checker' ),
+				'updated'
+			);
+		}
+		
+		settings_errors( 'tcd_email_messages' );
+		
+		// Get email statistics
+		$email_stats = $this->email_handler->get_email_stats( 30 );
+		?>
+		<div class="tcd-tab-content tcd-email-settings">
+			<h2><?php esc_html_e( 'Email Configuration', 'tainacan-document-checker' ); ?></h2>
+			
+			<!-- Email Statistics -->
+			<div class="tcd-email-stats" style="background: #f9f9f9; padding: 15px; margin-bottom: 20px; border-radius: 5px;">
+				<h3><?php esc_html_e( 'Email Statistics (Last 30 Days)', 'tainacan-document-checker' ); ?></h3>
+				<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 15px;">
+					<div>
+						<strong><?php echo esc_html( $email_stats['total_emails'] ); ?></strong><br>
+						<small><?php esc_html_e( 'Total Emails', 'tainacan-document-checker' ); ?></small>
+					</div>
+					<div>
+						<strong style="color: #46b450;"><?php echo esc_html( $email_stats['sent_emails'] ); ?></strong><br>
+						<small><?php esc_html_e( 'Sent Successfully', 'tainacan-document-checker' ); ?></small>
+					</div>
+					<div>
+						<strong style="color: #d63638;"><?php echo esc_html( $email_stats['failed_emails'] ); ?></strong><br>
+						<small><?php esc_html_e( 'Failed', 'tainacan-document-checker' ); ?></small>
+					</div>
+					<div>
+						<strong><?php echo esc_html( $email_stats['single_emails'] ); ?></strong><br>
+						<small><?php esc_html_e( 'Single Notifications', 'tainacan-document-checker' ); ?></small>
+					</div>
+					<div>
+						<strong><?php echo esc_html( $email_stats['batch_emails'] ); ?></strong><br>
+						<small><?php esc_html_e( 'Batch Notifications', 'tainacan-document-checker' ); ?></small>
+					</div>
+				</div>
+			</div>
+
+			<form method="post" action="options.php">
+				<?php settings_fields( 'tcd_email_settings' ); ?>
+				
+				<!-- General Email Settings -->
+				<h3><?php esc_html_e( 'General Email Settings', 'tainacan-document-checker' ); ?></h3>
 				<table class="form-table">
 					<tr>
-						<th scope="row"><?php esc_html_e( 'Required Documents', 'tainacan-document-checker' ); ?></th>
+						<th scope="row"><?php esc_html_e( 'Enable Email Notifications', 'tainacan-document-checker' ); ?></th>
 						<td>
-							<div id="tcd-documents-list">
-								<?php foreach ( $documents as $index => $document ) : ?>
-									<div class="tcd-document-row" style="margin-bottom: 10px;">
-										<input type="text" name="tcd_documents[]" 
-										       value="<?php echo esc_attr( $document ); ?>" 
-										       class="regular-text">
-										<button type="button" class="button tcd-remove-document">
-											<?php esc_html_e( 'Remove', 'tainacan-document-checker' ); ?>
-										</button>
-									</div>
-								<?php endforeach; ?>
-							</div>
-							
-							<button type="button" id="tcd-add-document" class="button">
-								<?php esc_html_e( 'Add Document', 'tainacan-document-checker' ); ?>
-							</button>
-							
-							<p class="description">
-								<?php esc_html_e( 'List of document names that must be attached to each item. These names will be matched against attachment filenames.', 'tainacan-document-checker' ); ?>
-							</p>
+							<label for="tcd_email_enabled">
+								<input type="checkbox" id="tcd_email_enabled" name="tcd_email_enabled" value="1" 
+								       <?php checked( get_option( 'tcd_email_enabled', false ) ); ?>>
+								<?php esc_html_e( 'Send email notifications when documents are missing or invalid', 'tainacan-document-checker' ); ?>
+							</label>
+						</td>
+					</tr>
+					<tr>
+						<th scope="row"><?php esc_html_e( 'Email Format', 'tainacan-document-checker' ); ?></th>
+						<td>
+							<label for="tcd_email_html">
+								<input type="checkbox" id="tcd_email_html" name="tcd_email_html" value="1" 
+								       <?php checked( get_option( 'tcd_email_html', false ) ); ?>>
+								<?php esc_html_e( 'Send HTML emails (unchecked = plain text)', 'tainacan-document-checker' ); ?>
+							</label>
 						</td>
 					</tr>
 				</table>
 				
-				<p class="submit">
-					<input type="submit" name="submit" class="button button-primary" 
-					       value="<?php esc_attr_e( 'Save Document Names', 'tainacan-document-checker' ); ?>">
+				<!-- SMTP Settings -->
+				<h3><?php esc_html_e( 'SMTP Configuration', 'tainacan-document-checker' ); ?></h3>
+				<table class="form-table">
+					<tr>
+						<th scope="row"><?php esc_html_e( 'Enable SMTP', 'tainacan-document-checker' ); ?></th>
+						<td>
+							<label for="tcd_smtp_enabled">
+								<input type="checkbox" id="tcd_smtp_enabled" name="tcd_smtp_enabled" value="1" 
+								       <?php checked( get_option( 'tcd_smtp_enabled', false ) ); ?>>
+								<?php esc_html_e( 'Use SMTP for sending emails', 'tainacan-document-checker' ); ?>
+							</label>
+						</td>
+					</tr>
+					<tr class="tcd-smtp-setting">
+						<th scope="row">
+							<label for="tcd_smtp_host"><?php esc_html_e( 'SMTP Host', 'tainacan-document-checker' ); ?></label>
+						</th>
+						<td>
+							<input type="text" id="tcd_smtp_host" name="tcd_smtp_host" 
+							       value="<?php echo esc_attr( get_option( 'tcd_smtp_host', '' ) ); ?>" class="regular-text">
+							<p class="description"><?php esc_html_e( 'e.g., smtp.gmail.com', 'tainacan-document-checker' ); ?></p>
+						</td>
+					</tr>
+					<tr class="tcd-smtp-setting">
+						<th scope="row">
+							<label for="tcd_smtp_port"><?php esc_html_e( 'SMTP Port', 'tainacan-document-checker' ); ?></label>
+						</th>
+						<td>
+							<input type="number" id="tcd_smtp_port" name="tcd_smtp_port" 
+							       value="<?php echo esc_attr( get_option( 'tcd_smtp_port', 587 ) ); ?>" class="small-text">
+							<p class="description"><?php esc_html_e( 'Common ports: 25, 465 (SSL), 587 (TLS)', 'tainacan-document-checker' ); ?></p>
+						</td>
+					</tr>
+					<tr class="tcd-smtp-setting">
+						<th scope="row">
+							<label for="tcd_smtp_encryption"><?php esc_html_e( 'Encryption', 'tainacan-document-checker' ); ?></label>
+						</th>
+						<td>
+							<select id="tcd_smtp_encryption" name="tcd_smtp_encryption">
+								<option value="" <?php selected( get_option( 'tcd_smtp_encryption', 'tls' ), '' ); ?>><?php esc_html_e( 'None', 'tainacan-document-checker' ); ?></option>
+								<option value="tls" <?php selected( get_option( 'tcd_smtp_encryption', 'tls' ), 'tls' ); ?>><?php esc_html_e( 'TLS', 'tainacan-document-checker' ); ?></option>
+								<option value="ssl" <?php selected( get_option( 'tcd_smtp_encryption', 'tls' ), 'ssl' ); ?>><?php esc_html_e( 'SSL', 'tainacan-document-checker' ); ?></option>
+							</select>
+						</td>
+					</tr>
+					<tr class="tcd-smtp-setting">
+						<th scope="row"><?php esc_html_e( 'SMTP Authentication', 'tainacan-document-checker' ); ?></th>
+						<td>
+							<label for="tcd_smtp_auth">
+								<input type="checkbox" id="tcd_smtp_auth" name="tcd_smtp_auth" value="1" 
+								       <?php checked( get_option( 'tcd_smtp_auth', true ) ); ?>>
+								<?php esc_html_e( 'Use SMTP authentication', 'tainacan-document-checker' ); ?>
+							</label>
+						</td>
+					</tr>
+					<tr class="tcd-smtp-setting tcd-smtp-auth-setting">
+						<th scope="row">
+							<label for="tcd_smtp_username"><?php esc_html_e( 'SMTP Username', 'tainacan-document-checker' ); ?></label>
+						</th>
+						<td>
+							<input type="text" id="tcd_smtp_username" name="tcd_smtp_username" 
+							       value="<?php echo esc_attr( get_option( 'tcd_smtp_username', '' ) ); ?>" class="regular-text">
+						</td>
+					</tr>
+					<tr class="tcd-smtp-setting tcd-smtp-auth-setting">
+						<th scope="row">
+							<label for="tcd_smtp_password"><?php esc_html_e( 'SMTP Password', 'tainacan-document-checker' ); ?></label>
+						</th>
+						<td>
+							<input type="password" id="tcd_smtp_password" name="tcd_smtp_password" 
+							       value="<?php echo esc_attr( get_option( 'tcd_smtp_password' ) ? '••••••••' : '' ); ?>" class="regular-text">
+							<p class="description"><?php esc_html_e( 'Leave blank to keep current password unchanged.', 'tainacan-document-checker' ); ?></p>
+						</td>
+					</tr>
+					<tr class="tcd-smtp-setting">
+						<th scope="row">
+							<label for="tcd_smtp_from_email"><?php esc_html_e( 'From Email', 'tainacan-document-checker' ); ?></label>
+						</th>
+						<td>
+							<input type="email" id="tcd_smtp_from_email" name="tcd_smtp_from_email" 
+							       value="<?php echo esc_attr( get_option( 'tcd_smtp_from_email', get_option( 'admin_email' ) ) ); ?>" class="regular-text">
+						</td>
+					</tr>
+					<tr class="tcd-smtp-setting">
+						<th scope="row">
+							<label for="tcd_smtp_from_name"><?php esc_html_e( 'From Name', 'tainacan-document-checker' ); ?></label>
+						</th>
+						<td>
+							<input type="text" id="tcd_smtp_from_name" name="tcd_smtp_from_name" 
+							       value="<?php echo esc_attr( get_option( 'tcd_smtp_from_name', get_bloginfo( 'name' ) ) ); ?>" class="regular-text">
+						</td>
+					</tr>
+				</table>
+				
+				<!-- SMTP Test -->
+				<div class="tcd-smtp-test" style="background: #fff; border: 1px solid #ccd0d4; padding: 15px; margin: 20px 0;">
+					<h4><?php esc_html_e( 'Test SMTP Configuration', 'tainacan-document-checker' ); ?></h4>
+					<p><?php esc_html_e( 'Send a test email to verify your SMTP settings are working correctly.', 'tainacan-document-checker' ); ?></p>
+					<div style="display: flex; gap: 10px; align-items: center;">
+						<input type="email" id="tcd_test_email" placeholder="<?php esc_attr_e( 'Enter test email address', 'tainacan-document-checker' ); ?>" class="regular-text">
+						<button type="button" id="tcd-smtp-test-btn" class="button"><?php esc_html_e( 'Send Test Email', 'tainacan-document-checker' ); ?></button>
+					</div>
+					<div id="tcd-smtp-test-result" style="margin-top: 10px;"></div>
+				</div>
+				
+				<!-- Email Templates -->
+				<h3><?php esc_html_e( 'Email Templates', 'tainacan-document-checker' ); ?></h3>
+				<p class="description">
+					<?php esc_html_e( 'Available placeholders:', 'tainacan-document-checker' ); ?>
+					<code>{user_name}</code>, <code>{user_email}</code>, <code>{item_title}</code>, <code>{item_id}</code>, <code>{item_url}</code>, 
+					<code>{missing_documents}</code>, <code>{invalid_documents}</code>, <code>{found_documents}</code>, 
+					<code>{site_name}</code>, <code>{site_url}</code>, <code>{date}</code>, <code>{time}</code>
 				</p>
+				
+				<table class="form-table">
+					<tr>
+						<th scope="row">
+							<label for="tcd_email_subject"><?php esc_html_e( 'Single Item Email Subject', 'tainacan-document-checker' ); ?></label>
+						</th>
+						<td>
+							<input type="text" id="tcd_email_subject" name="tcd_email_subject" 
+							       value="<?php echo esc_attr( get_option( 'tcd_email_subject', __( 'Document Verification Required - {item_title}', 'tainacan-document-checker' ) ) ); ?>" 
+							       class="large-text">
+						</td>
+					</tr>
+					<tr>
+						<th scope="row">
+							<label for="tcd_email_template"><?php esc_html_e( 'Single Item Email Template', 'tainacan-document-checker' ); ?></label>
+						</th>
+						<td>
+							<textarea id="tcd_email_template" name="tcd_email_template" rows="10" class="large-text"><?php echo esc_textarea( get_option( 'tcd_email_template', $this->get_default_email_template() ) ); ?></textarea>
+						</td>
+					</tr>
+					<tr>
+						<th scope="row">
+							<label for="tcd_batch_email_subject"><?php esc_html_e( 'Batch Email Subject', 'tainacan-document-checker' ); ?></label>
+						</th>
+						<td>
+							<input type="text" id="tcd_batch_email_subject" name="tcd_batch_email_subject" 
+							       value="<?php echo esc_attr( get_option( 'tcd_batch_email_subject', __( 'Multiple Documents Require Verification', 'tainacan-document-checker' ) ) ); ?>" 
+							       class="large-text">
+							<p class="description"><?php esc_html_e( 'Additional placeholders for batch emails: {total_items}, {items_list}', 'tainacan-document-checker' ); ?></p>
+						</td>
+					</tr>
+					<tr>
+						<th scope="row">
+							<label for="tcd_batch_email_template"><?php esc_html_e( 'Batch Email Template', 'tainacan-document-checker' ); ?></label>
+						</th>
+						<td>
+							<textarea id="tcd_batch_email_template" name="tcd_batch_email_template" rows="10" class="large-text"><?php echo esc_textarea( get_option( 'tcd_batch_email_template', $this->get_default_batch_email_template() ) ); ?></textarea>
+						</td>
+					</tr>
+				</table>
+				
+				<?php submit_button(); ?>
 			</form>
 		</div>
 		
 		<script>
 		jQuery(document).ready(function($) {
-			$('#tcd-add-document').on('click', function() {
-				var newRow = '<div class="tcd-document-row" style="margin-bottom: 10px;">' +
-							'<input type="text" name="tcd_documents[]" class="regular-text">' +
-							'<button type="button" class="button tcd-remove-document">Remove</button>' +
-							'</div>';
-				$('#tcd-documents-list').append(newRow);
-			});
+			// Show/hide SMTP settings
+			function toggleSmtpSettings() {
+				if ($('#tcd_smtp_enabled').is(':checked')) {
+					$('.tcd-smtp-setting').show();
+				} else {
+					$('.tcd-smtp-setting').hide();
+				}
+			}
 			
-			$(document).on('click', '.tcd-remove-document', function() {
-				$(this).closest('.tcd-document-row').remove();
+			function toggleSmtpAuthSettings() {
+				if ($('#tcd_smtp_auth').is(':checked')) {
+					$('.tcd-smtp-auth-setting').show();
+				} else {
+					$('.tcd-smtp-auth-setting').hide();
+				}
+			}
+			
+			$('#tcd_smtp_enabled').change(toggleSmtpSettings);
+			$('#tcd_smtp_auth').change(toggleSmtpAuthSettings);
+			
+			toggleSmtpSettings();
+			toggleSmtpAuthSettings();
+			
+			// SMTP Test
+			$('#tcd-smtp-test-btn').click(function() {
+				var $btn = $(this);
+				var $result = $('#tcd-smtp-test-result');
+				var testEmail = $('#tcd_test_email').val();
+				
+				if (!testEmail) {
+					$result.html('<div class="notice notice-error"><p><?php esc_html_e( 'Please enter a test email address.', 'tainacan-document-checker' ); ?></p></div>');
+					return;
+				}
+				
+				$btn.prop('disabled', true).text('<?php esc_html_e( 'Sending...', 'tainacan-document-checker' ); ?>');
+				$result.html('');
+				
+				$.ajax({
+					url: ajaxurl,
+					type: 'POST',
+					data: {
+						action: 'tcd_test_smtp',
+						test_email: testEmail,
+						nonce: '<?php echo wp_create_nonce( 'tcd_ajax_nonce' ); ?>'
+					},
+					success: function(response) {
+						if (response.success) {
+							$result.html('<div class="notice notice-success"><p>' + response.data + '</p></div>');
+						} else {
+							$result.html('<div class="notice notice-error"><p>' + response.data + '</p></div>');
+						}
+					},
+					error: function() {
+						$result.html('<div class="notice notice-error"><p><?php esc_html_e( 'An error occurred while testing SMTP.', 'tainacan-document-checker' ); ?></p></div>');
+					},
+					complete: function() {
+						$btn.prop('disabled', false).text('<?php esc_html_e( 'Send Test Email', 'tainacan-document-checker' ); ?>');
+					}
+				});
 			});
 		});
 		</script>
 		<?php
-	}
-
-	/**
-	 * Save settings.
-	 *
-	 * @return void
-	 */
-	public function save_settings(): void {
-		if ( ! isset( $_POST['tcd_settings_nonce'] ) || 
-		     ! wp_verify_nonce( $_POST['tcd_settings_nonce'], 'tcd_save_settings' ) ) {
-			wp_die( 'Security check failed' );
-		}
-
-		if ( ! current_user_can( 'manage_options' ) ) {
-			wp_die( 'Insufficient permissions' );
-		}
-
-		// API Settings
-		update_option( 'tcd_api_url', esc_url_raw( $_POST['tcd_api_url'] ?? '' ) );
-		update_option( 'tcd_default_collection_id', absint( $_POST['tcd_default_collection_id'] ?? 0 ) );
-		
-		// SSL Settings
-		update_option( 'tcd_ssl_verify', isset( $_POST['tcd_ssl_verify'] ) );
-		update_option( 'tcd_http_timeout', absint( $_POST['tcd_http_timeout'] ?? 30 ) );
-		
-		// General Settings
-		update_option( 'tcd_cache_duration', absint( $_POST['tcd_cache_duration'] ?? 300 ) );
-		update_option( 'tcd_debug_mode', isset( $_POST['tcd_debug_mode'] ) );
-
-		wp_redirect( add_query_arg( 
-			array( 
-				'page' => 'tainacan-document-checker',
-				'tab' => 'settings',
-				'settings-updated' => 'true'
-			), 
-			admin_url( 'admin.php' ) 
-		) );
-		exit;
-	}
-
-	/**
-	 * Save document names.
-	 *
-	 * @return void
-	 */
-	public function save_documents(): void {
-		if ( ! isset( $_POST['tcd_documents_nonce'] ) || 
-		     ! wp_verify_nonce( $_POST['tcd_documents_nonce'], 'tcd_save_documents' ) ) {
-			wp_die( 'Security check failed' );
-		}
-
-		if ( ! current_user_can( 'manage_options' ) ) {
-			wp_die( 'Insufficient permissions' );
-		}
-
-		$documents = array();
-		if ( isset( $_POST['tcd_documents'] ) && is_array( $_POST['tcd_documents'] ) ) {
-			foreach ( $_POST['tcd_documents'] as $document ) {
-				$document = sanitize_text_field( $document );
-				if ( ! empty( $document ) ) {
-					$documents[] = $document;
-				}
-			}
-		}
-
-		update_option( 'tcd_required_documents', $documents );
-
-		wp_redirect( add_query_arg( 
-			array( 
-				'page' => 'tainacan-document-checker',
-				'tab' => 'documents',
-				'settings-updated' => 'true'
-			), 
-			admin_url( 'admin.php' ) 
-		) );
-		exit;
-	}
-
-	/**
-	 * Test API connection (AJAX handler).
-	 *
-	 * @return void
-	 */
-	public function test_api_connection(): void {
-		check_ajax_referer( 'tcd_test_connection', 'nonce' );
-		
-		if ( ! current_user_can( 'manage_options' ) ) {
-			wp_send_json_error( array( 'message' => __( 'Insufficient permissions.', 'tainacan-document-checker' ) ) );
-		}
-		
-		$api_url = get_option( 'tcd_api_url' );
-		$ssl_verify = get_option( 'tcd_ssl_verify', true );
-		$timeout = get_option( 'tcd_http_timeout', 30 );
-		
-		// Test the connection
-		$test_url = $api_url . '/collections';
-		
-		$args = array(
-			'timeout'     => $timeout,
-			'redirection' => 5,
-			'httpversion' => '1.1',
-			'sslverify'   => $ssl_verify,
-			'headers'     => array(
-				'Accept' => 'application/json',
-			),
-		);
-		
-		$response = wp_remote_get( $test_url, $args );
-		
-		if ( is_wp_error( $response ) ) {
-			$error_message = $response->get_error_message();
-			
-			// Provide specific guidance based on error
-			if ( strpos( $error_message, 'SSL certificate problem' ) !== false ||
-			     strpos( $error_message, 'cURL error 60' ) !== false ) {
-				$error_message .= '. ' . __( 'Try disabling SSL verification in settings.', 'tainacan-document-checker' );
-			}
-			
-			wp_send_json_error( array( 
-				'message' => sprintf( __( 'Connection failed: %s', 'tainacan-document-checker' ), $error_message )
-			) );
-		}
-		
-		$status_code = wp_remote_retrieve_response_code( $response );
-		
-		if ( $status_code >= 200 && $status_code < 300 ) {
-			wp_send_json_success( array( 
-				'message' => sprintf( __( 'Connection successful! (HTTP %d)', 'tainacan-document-checker' ), $status_code )
-			) );
-		} else {
-			wp_send_json_error( array( 
-				'message' => sprintf( __( 'API returned HTTP %d', 'tainacan-document-checker' ), $status_code )
-			) );
-		}
 	}
 }
