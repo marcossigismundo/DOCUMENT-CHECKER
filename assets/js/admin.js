@@ -97,6 +97,9 @@
                             $result.prepend('<div class="notice notice-success"><p>' + 
                                 (tcd_ajax.strings?.email_sent || 'Email notification sent successfully') + 
                                 '</p></div>');
+                        } else if (response.data.email_message) {
+                            $result.prepend('<div class="notice notice-info"><p>' + 
+                                response.data.email_message + '</p></div>');
                         }
                     } else {
                         $result.html('<div class="notice notice-error"><p>' + 
@@ -133,12 +136,20 @@
                 return;
             }
             
+            console.log('TCD: Batch check parameters:', {
+                collection: collectionId,
+                perPage: perPage,
+                sendEmail: sendEmail
+            });
+            
             // Reset and show progress
             $button.prop('disabled', true);
             $progress.show().find('.tcd-progress-bar').css('width', '0%');
             $result.html('').show();
             
             let currentPage = 1;
+            let totalEmailsSent = 0;
+            let totalEmailsFailed = 0;
             
             const processBatch = () => {
                 $.ajax({
@@ -164,6 +175,12 @@
                             // Append results
                             $result.append(response.data.html);
                             
+                            // Track email statistics
+                            if (response.data.emails_sent !== undefined) {
+                                totalEmailsSent += response.data.emails_sent;
+                                totalEmailsFailed += response.data.emails_failed || 0;
+                            }
+                            
                             // Check if there are more pages
                             if (response.data.has_more) {
                                 currentPage++;
@@ -173,9 +190,11 @@
                                 $progress.find('.tcd-progress-text').text('Complete!');
                                 $button.prop('disabled', false);
                                 
-                                if (response.data.emails_sent) {
-                                    $result.prepend('<div class="notice notice-success"><p>' + 
-                                        response.data.emails_sent + ' email notifications sent</p></div>');
+                                // Show email summary if emails were sent
+                                if (sendEmail && (totalEmailsSent > 0 || totalEmailsFailed > 0)) {
+                                    const emailMessage = tcd_ajax.strings?.emails_sent || 
+                                        'Email notifications: ' + totalEmailsSent + ' sent, ' + totalEmailsFailed + ' failed';
+                                    $result.prepend('<div class="notice notice-success"><p>' + emailMessage + '</p></div>');
                                 }
                             }
                         } else {
@@ -306,13 +325,42 @@
                 },
                 success: function(response) {
                     if (response.success) {
-                        $resultDiv.html('<span style="color: green;">✓ Email sent successfully</span>');
+                        $resultDiv.html('<span style="color: green;">✔ Email sent successfully</span>');
                     } else {
                         $resultDiv.html('<span style="color: red;">✗ ' + response.data + '</span>');
                     }
                 },
                 error: function() {
                     $resultDiv.html('<span style="color: red;">✗ Failed to send email</span>');
+                }
+            });
+        },
+
+        // Função para enviar notificações em lote
+        sendBatchEmails: function(itemIds) {
+            console.log('TCD: Sending batch emails for items:', itemIds);
+            
+            const $resultDiv = $('#tcd-batch-email-result');
+            $resultDiv.html('<span class="spinner is-active"></span> Sending emails...');
+            
+            $.ajax({
+                url: tcd_ajax.ajax_url,
+                type: 'POST',
+                data: {
+                    action: 'tcd_send_notifications',
+                    item_ids: itemIds,
+                    nonce: tcd_ajax.nonce
+                },
+                success: function(response) {
+                    if (response.success) {
+                        $resultDiv.html('<div class="notice notice-success"><p>' + response.data.message + '</p></div>');
+                    } else {
+                        $resultDiv.html('<div class="notice notice-error"><p>' + response.data + '</p></div>');
+                    }
+                },
+                error: function(xhr, status, error) {
+                    console.error('TCD: Batch email error:', status, error);
+                    $resultDiv.html('<div class="notice notice-error"><p>Failed to send emails. Error: ' + error + '</p></div>');
                 }
             });
         }
