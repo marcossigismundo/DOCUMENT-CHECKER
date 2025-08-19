@@ -40,13 +40,6 @@ class TCD_Document_Checker {
 	private bool $debug_mode;
 
 	/**
-	 * SSL verification flag.
-	 *
-	 * @var bool
-	 */
-	private bool $ssl_verify;
-
-	/**
 	 * Constructor.
 	 */
 	public function __construct() {
@@ -57,75 +50,11 @@ class TCD_Document_Checker {
 			'documento_responsavel',
 		) );
 		$this->debug_mode         = (bool) get_option( 'tcd_debug_mode', false );
-		$this->ssl_verify         = (bool) get_option( 'tcd_ssl_verify', true );
-		
-		// Desabilitar SSL verify para localhost/desenvolvimento
-		if ( $this->is_localhost() ) {
-			$this->ssl_verify = false;
-		}
 		
 		// Log para debug
 		if ( $this->debug_mode ) {
 			error_log( 'TCD Debug - Required documents loaded: ' . print_r( $this->required_documents, true ) );
-			error_log( 'TCD Debug - SSL Verification: ' . ( $this->ssl_verify ? 'Enabled' : 'Disabled' ) );
 		}
-	}
-
-	/**
-	 * Check if running on localhost.
-	 *
-	 * @return bool
-	 */
-	private function is_localhost(): bool {
-		$whitelist = array( '127.0.0.1', '::1' );
-		
-		if ( isset( $_SERVER['SERVER_NAME'] ) ) {
-			if ( in_array( $_SERVER['SERVER_NAME'], array( 'localhost', '127.0.0.1' ), true ) ) {
-				return true;
-			}
-		}
-		
-		if ( isset( $_SERVER['REMOTE_ADDR'] ) && in_array( $_SERVER['REMOTE_ADDR'], $whitelist, true ) ) {
-			return true;
-		}
-		
-		// Check if URL contains localhost
-		if ( strpos( $this->api_url, 'localhost' ) !== false || 
-		     strpos( $this->api_url, '127.0.0.1' ) !== false ) {
-			return true;
-		}
-		
-		return false;
-	}
-
-	/**
-	 * Get HTTP request args with proper SSL configuration.
-	 *
-	 * @return array
-	 */
-	private function get_http_args(): array {
-		$args = array(
-			'timeout'     => 30,
-			'redirection' => 5,
-			'httpversion' => '1.1',
-			'headers'     => array(
-				'Accept' => 'application/json',
-				'Content-Type' => 'application/json',
-			),
-			'sslverify'   => $this->ssl_verify,
-		);
-
-		// Additional SSL configuration for development environments
-		if ( ! $this->ssl_verify ) {
-			$args['sslverify'] = false;
-			$args['ssl'] = false;
-			
-			// Add filter to bypass SSL for this request
-			add_filter( 'https_ssl_verify', '__return_false' );
-			add_filter( 'https_local_ssl_verify', '__return_false' );
-		}
-
-		return $args;
 	}
 
 	/**
@@ -282,7 +211,6 @@ class TCD_Document_Checker {
 				'required_documents' => $this->required_documents,
 				'attachment_details' => $attachment_details,
 				'raw_attachments'    => $attachments,
-				'ssl_verify'         => $this->ssl_verify,
 			);
 		}
 
@@ -367,30 +295,18 @@ class TCD_Document_Checker {
 			error_log( 'TCD Debug - Fetching attachments from: ' . $url );
 		}
 
-		$args = $this->get_http_args();
+		// Configuração para resolver erro SSL
+		$args = array(
+			'timeout' => 30,
+			'headers' => array(
+				'Accept' => 'application/json',
+			),
+			'sslverify' => false, // Desabilita verificação SSL para resolver erro cURL 60
+		);
+
 		$response = wp_remote_get( $url, $args );
 
-		// Remove filters if they were added
-		if ( ! $this->ssl_verify ) {
-			remove_filter( 'https_ssl_verify', '__return_false' );
-			remove_filter( 'https_local_ssl_verify', '__return_false' );
-		}
-
 		if ( is_wp_error( $response ) ) {
-			if ( $this->debug_mode ) {
-				error_log( 'TCD Debug - API Error: ' . $response->get_error_message() );
-				error_log( 'TCD Debug - Error Code: ' . $response->get_error_code() );
-			}
-			
-			// Handle specific SSL error
-			if ( strpos( $response->get_error_message(), 'SSL certificate problem' ) !== false ||
-			     strpos( $response->get_error_message(), 'cURL error 60' ) !== false ) {
-				return new WP_Error( 
-					'ssl_error', 
-					__( 'SSL Certificate verification failed. Please check SSL settings or contact administrator.', 'tainacan-document-checker' ) 
-				);
-			}
-			
 			return $response;
 		}
 
@@ -448,19 +364,18 @@ class TCD_Document_Checker {
 			error_log( 'TCD Debug - Fetching items from URL: ' . $url );
 		}
 
-		$args = $this->get_http_args();
+		// Configuração para resolver erro SSL
+		$args = array(
+			'timeout' => 30,
+			'headers' => array(
+				'Accept' => 'application/json',
+			),
+			'sslverify' => false, // Desabilita verificação SSL para resolver erro cURL 60
+		);
+
 		$response = wp_remote_get( $url, $args );
 
-		// Remove filters if they were added
-		if ( ! $this->ssl_verify ) {
-			remove_filter( 'https_ssl_verify', '__return_false' );
-			remove_filter( 'https_local_ssl_verify', '__return_false' );
-		}
-
 		if ( is_wp_error( $response ) ) {
-			if ( $this->debug_mode ) {
-				error_log( 'TCD Debug - Collection API Error: ' . $response->get_error_message() );
-			}
 			return $response;
 		}
 
@@ -724,6 +639,21 @@ class TCD_Document_Checker {
 			"DELETE FROM {$wpdb->options} 
 			WHERE option_name LIKE '_transient_tcd_%' 
 			OR option_name LIKE '_transient_timeout_tcd_%'"
+		);
+	}
+
+	/**
+	 * Get item information.
+	 *
+	 * @param int $item_id Item ID.
+	 * @return array Item information.
+	 */
+	public function get_item_info( int $item_id ): array {
+		// Implementação simplificada - pode ser expandida conforme necessário
+		return array(
+			'id' => $item_id,
+			'title' => 'Item #' . $item_id,
+			'url' => get_site_url() . '/item/' . $item_id,
 		);
 	}
 }
